@@ -1,4 +1,4 @@
-﻿# Giai đoạn 2 — Tuần 4-6: RAG Chuyên Sâu
+# Giai đoạn 2 — Tuần 4-6: RAG Chuyên Sâu
 
 ## Mục tiêu tổng thể
 

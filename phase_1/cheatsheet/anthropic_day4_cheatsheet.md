@@ -97,7 +97,7 @@ def chat_with_llama(request: ChatRequest, settings: Settings = Depends(get_setti
     
     # Bước 2: Gọi Groq API
     response = client.chat.completions.create(
-        model="llama3-8b-8192",
+        model="groq/compound-mini",
         max_tokens=500,
         messages=[
             {"role": "system", "content": "Bạn là một trợ lý thông minh, lịch sự và trả lời ngắn gọn."},
