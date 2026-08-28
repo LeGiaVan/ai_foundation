@@ -11,12 +11,12 @@
       id: int
       name: str = Field(..., description="User's full name")
   ```
-- [ ] **Use `Field`** to add constraints (min/max length, regex) and documentation. Verify via `User.schema()`.
-- [ ] **Generate JSON Schema** with `model.schema_json()` and compare against expected OpenAPI output.
-- [ ] **Validate nested models** and write custom validators using `@validator`. Example: email validation with regex and a nested address model:
+- [ ] **Use `Field`** to add constraints (min/max length, regex) and documentation. Verify via `User.model_json_schema()`.
+- [ ] **Generate JSON Schema** with `model.model_json_schema()` and compare against expected OpenAPI output.
+- [ ] **Validate nested models** and write custom validators using `@field_validator`. Example: email validation with regex and a nested address model:
 
 ```python
-from pydantic import BaseModel, EmailStr, validator
+from pydantic import BaseModel, EmailStr, field_validator
 
 class Address(BaseModel):
     street: str
@@ -27,14 +27,15 @@ class User(BaseModel):
     email: EmailStr
     address: Address
 
-    @validator('email')
-    def email_must_be_company(cls, v):
+    @field_validator('email')
+    @classmethod
+    def email_must_be_company(cls, v: str) -> str:
         """Ensure email belongs to the company domain."""
         if not v.endswith('@example.com'):
             raise ValueError('Email must be from @example.com domain')
         return v
 ```
-- [ ] **Parse external data** using `parse_obj` / `parse_raw` and handle `ValidationError` gracefully.
+- [ ] **Parse external data** using `model_validate` / `model_validate_json` and handle `ValidationError` gracefully.
 
 ### 🏗 OOP (Python)
 - [ ] **Explain inheritance** and demonstrate `super().__init__()` with a concrete example (e.g., `BaseRepository` → `QdrantRepository`).
@@ -116,7 +117,7 @@ class User(BaseModel):
 3. **Describe the flow of a Recursive Map‑Reduce summarisation.** – Outline map → reduce → recursion steps with pseudocode.
 4. **What happens if a downstream LLM request raises a 429 error?** – Detail exponential back‑off, retry limits, and fallback strategies.
 5. **How does FastAPI’s Dependency Injection improve testability?** – Show how to inject a mock service in unit tests.
-6. **Give an example of a Pydantic validator that enforces a regex pattern.** – Provide a code snippet using `@validator`.
+6. **Give an example of a Pydantic validator that enforces a regex pattern.** – Provide a code snippet using `@field_validator`.
 7. **Explain the difference between a `BaseModel` and a plain `dict` in FastAPI responses.** – Mention automatic validation, OpenAPI schema generation, and serialization.
 8. **What is the purpose of `gather(return_exceptions=True)` in concurrent LLM calls?** – Explain error collection without aborting other tasks.
 9. **How would you convert a synchronous PDF parser to an async version?** – Suggest `run_in_executor` or using an async‑compatible library.
