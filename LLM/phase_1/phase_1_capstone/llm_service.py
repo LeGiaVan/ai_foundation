@@ -10,18 +10,20 @@ from prompts import MAP_PROMPT_TEMPLATE, REDUCE_PROMPT_TEMPLATE, QA_SYSTEM_PROMP
 import asyncio
 from dotenv import load_dotenv
 import time
-
+from abc import ABC, abstractmethod
 # Tải các biến môi trường từ file .env (ví dụ: GROQ_API_KEY)
 load_dotenv()
 
 # Tạo lớp trừu tượng (Abstract Base Class)
-class BaseLLMClient:
+class BaseLLMClient(ABC):
     async def generate_structured(self, prompt: str, schema: Type[BaseModel]) -> BaseModel:
         pass
     
+    @abstractmethod
     async def generate_text(self, prompt: str) -> str:
         pass
     
+    @abstractmethod
     async def stream_chat(self, system_prompt: str, user_prompt: str):
         pass
 

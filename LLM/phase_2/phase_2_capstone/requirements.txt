@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+groq
+PyMuPDF
+python-docx
+langchain-text-splitters
+sentence-transformers
+qdrant-client
+fastembed
+python-multipartpython-multipart

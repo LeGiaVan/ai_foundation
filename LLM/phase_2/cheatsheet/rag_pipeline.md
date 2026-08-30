@@ -393,26 +393,71 @@ results = client.query_points(
 )
 ```
 
+> **🔍 RRF (Reciprocal Rank Fusion) là gì?**
+> RRF là kỹ thuật kết hợp danh sách kết quả từ nhiều phương pháp truy xuất khác nhau (VD: BM25 + Vector Search) dựa trên thứ hạng (rank) thay vì điểm số tuyệt đối.
+> 
+> **Công thức:**
+> $$ RRF\_score(d) = \sum_{q \in Q} \frac{1}{k + rank_q(d)} $$
+> 
+> - **$d$**: Tài liệu đang xét.
+> - **$Q$**: Tập hợp các phương pháp tìm kiếm (VD: Vector, Sparse).
+> - **$rank_q(d)$**: Thứ hạng của tài liệu $d$ trong kết quả của phương pháp $q$ (bắt đầu từ 1).
+> - **$k$**: Hằng số làm mịn, thường dùng **$k=60$**.
+> 
+> *Tài liệu xếp hạng cao ở nhiều danh sách khác nhau sẽ có tổng điểm RRF càng lớn.*
+
 ---
 
-## 5️⃣  Reranking — Nâng chất lượng top-k
+## 5️⃣  Reranking — Nâng chất lượng top-k (Cross-encoder)
 
-### Vì sao cần rerank?
+### Vì sao cần Rerank? (Bi-encoder vs Cross-encoder)
 
+Trong hệ thống RAG, để cân bằng giữa **Tốc độ (Latency)** và **Độ chính xác (Accuracy)**, người ta thường dùng chiến lược **2 bước (Retrieve & Rerank)** với hai loại mô hình khác nhau:
+
+#### 1. Bi-encoder (Cơ chế Nhúng Độc lập / Late Interaction)
+
+```text
+[Query]       [Document]
+   ↓               ↓
+[ BERT ]        [ BERT ]     <-- Self-Attention (Hoàn toàn độc lập)
+   ↓               ↓
+[Vector]        [Vector]     <-- Thông tin bị ép nén (Pooling)
+   └──────> <──────┘
+    Cosine Similarity        <-- So sánh ở phút cuối (Late Interaction)
 ```
-Bi-encoder (embedding model):
-  → Encode query và chunk RIÊNG BIỆT → so sánh vector
-  → Nhanh nhưng "xấp xỉ"
+- **Kiến trúc (Architecture):** Xử lý Câu hỏi và Tài liệu qua hai luồng song song, hoàn toàn không biết đến sự tồn tại của nhau.
+- **Cơ chế Attention:** Chỉ có **Self-Attention** xảy ra *bên trong* từng luồng. Từ trong câu hỏi chỉ tương tác với các từ khác trong câu hỏi.
+- **Điểm yếu cốt lõi:** Sau khi đi qua mạng, toàn bộ ngữ nghĩa phức tạp bị ép lại thành một vector (vd: 768 chiều). Việc so sánh (Cosine) chỉ thực hiện ở bước cuối cùng làm mất mát rất nhiều thông tin ngữ nghĩa chéo.
+- **Đổi lại:** **Cực kỳ Nhanh**. Có thể tính toán sẵn embedding cho hàng triệu tài liệu.
 
-Cross-encoder (reranker):
-  → Đọc query + chunk CÙNG LÚC → đánh giá trực tiếp mức độ liên quan
-  → Chậm nhưng CHÍNH XÁC hơn nhiều
+#### 2. Cross-encoder (Cơ chế Tương tác Sớm / Early Interaction)
 
-Pipeline tối ưu:
-  Qdrant → top-20 (bi-encoder, nhanh)
-    → Reranker → top-3 (cross-encoder, chính xác)
-      → LLM với 3 chunks chất lượng cao
+```text
+  [Query] + [Document]
+           ↓
+      [   BERT   ]           <-- Cross-Attention (Tương tác chéo từng từ ở mọi layers)
+           ↓
+     [Linear Layer]
+           ↓
+    [Score (0.0 -> 1.0)]     <-- Ra quyết định trực tiếp (Early Interaction)
 ```
+- **Kiến trúc (Architecture):** Ghép nối (concatenate) Câu hỏi và Tài liệu thành một chuỗi duy nhất: `[CLS] Câu hỏi [SEP] Tài liệu [SEP]` và đưa vào MỘT mạng Transformer duy nhất.
+- **Cơ chế Attention:** Từ lớp mạng đầu tiên, cơ chế **Cross-Attention (Full Attention)** đã được kích hoạt. Từ "Apple" trong câu hỏi có thể trực tiếp tính toán sự liên quan với từ "iPhone" nằm sâu bên trong tài liệu. Sự tương tác từ-qua-từ (word-by-word) này diễn ra qua hàng chục lớp mạng.
+- **Điểm mạnh cốt lõi:** Đầu ra không phải vector, mà là một điểm số thể hiện trực tiếp xác suất tài liệu này là câu trả lời cho câu hỏi. **Vô cùng Chính xác**.
+- **Đổi lại:** **Cực kỳ Chậm**. Mỗi khi có query mới, phải chạy AI dự đoán lại từ đầu cho TỪNG cặp (query, document). Không thể tính trước được.
+
+---
+
+### 🔥 Pipeline 2 bước Tối ưu (Retrieve & Rerank)
+
+Vì Reranker quá chậm để quét qua toàn bộ database hàng triệu tài liệu, ta kết hợp sức mạnh của cả 2:
+
+1. **Retrieve (Lưới quét rộng):** Dùng Bi-encoder (Qdrant Vector/Hybrid Search) quét qua toàn bộ DB để vớt lên một lượng nhỏ tài liệu tiềm năng (VD: **Top-20**). Bước này mất vài mili-giây.
+2. **Rerank (Chấm điểm tinh):** Đưa Top-20 tài liệu này qua mô hình Cross-encoder. Mô hình sẽ "đọc kỹ" từng cặp (Query, Chunk 1), (Query, Chunk 2)... và chấm điểm lại sự liên quan một cách khắt khe. Cuối cùng, sắp xếp lại và lấy ra **Top-3** tinh túy nhất để đưa cho LLM.
+
+💡 *Ví dụ nôm na:*
+- **Bi-encoder (Retrieve):** Giống như HR lọc nhanh CV qua từ khóa để chọn ra 20 ứng viên từ 1000 hồ sơ.
+- **Cross-encoder (Rerank):** Giống như Giám đốc trực tiếp phỏng vấn (đọc kỹ, hỏi đáp) 20 ứng viên đó để chọn ra 3 người xuất sắc nhất.
 
 ### Code Reranking
 

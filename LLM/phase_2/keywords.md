@@ -1,0 +1,40 @@
+# Danh sách từ khóa Giai đoạn 2 (RAG Chuyên Sâu)
+
+- RAG (Retrieval-Augmented Generation)
+- Document parsing
+- PyMuPDF (fitz)
+- python-docx
+- Chunking
+- Fixed-size chunking
+- Chunk overlap
+- Recursive Character Text Splitting
+- Semantic chunking
+- Embedding
+- Dense vector
+- Sparse vector (BM25)
+- Cosine similarity
+- Vector Database
+- Qdrant
+- Collection
+- Point
+- Payload
+- HNSW (Hierarchical Navigable Small World)
+- Top-k retrieval
+- Retrieval quality
+- False positive
+- False negative
+- Precision@k
+- RAG Prompt Template
+- FastAPI File Upload
+- BytesIO
+- Hybrid search
+- Reciprocal Rank Fusion (RRF)
+- Reranking
+- Cross-encoder
+- Payload Index
+- Metadata filtering
+- RAGAS (RAG Assessment)
+- Faithfulness
+- Answer Relevancy
+- Context Precision
+- Context Recall
