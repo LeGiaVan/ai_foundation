@@ -1,4 +1,4 @@
-﻿# Giai đoạn 3 — Tuần 7-9: LangChain, Function Calling & AI Agent
+# Giai đoạn 3 — Tuần 7-9: LangChain, Function Calling & AI Agent
 
 ## Mục tiêu tổng thể
 
@@ -90,7 +90,7 @@ pip install langchain langchain-anthropic langchain-openai python-dotenv
   - `JsonOutputParser` — parse JSON, raise error nếu LLM trả về JSON sai format
   - `PydanticOutputParser` — parse và validate theo Pydantic model, mạnh nhất
 
-- **`.with_structured_output()`** — cách hiện đại nhất (2024+). Thay vì dùng parser riêng, gọi trực tiếp trên model. LangChain tự chọn phương pháp tốt nhất (tool calling hoặc JSON mode) tùy theo model.
+- **`.with_structured_output()`** — cách hiện đại nhất (2024+). Thay vì dùng parser riêng, gọi trực tiếp trên model. LangChain tự chọn phương pháp tốt nhất (tool calling hoặc JSON mode) tùy theo model. *(Lưu ý: Tính năng này yêu cầu model phải hỗ trợ "tool calling". Với các model không hỗ trợ như `groq/compound-mini`, hệ thống sẽ báo lỗi `BadRequestError`. Khi đó bạn bắt buộc phải dùng `PydanticOutputParser` thay thế)*.
 
 ```python
 from pydantic import BaseModel, Field
@@ -100,9 +100,24 @@ class BookReview(BaseModel):
     rating: int = Field(description="Điểm từ 1-10", ge=1, le=10)
     summary: str = Field(description="Tóm tắt đánh giá trong 2 câu")
 
-model = ChatAnthropic(model="claude-3-5-haiku-20241022")
-structured_model = model.with_structured_output(BookReview)
-result = structured_model.invoke("Đánh giá cuốn 'Atomic Habits'")
+from langchain_core.prompts import PromptTemplate
+from langchain_groq import ChatGroq
+from langchain_core.output_parsers import PydanticOutputParser
+
+model = ChatGroq(model="groq/compound-mini") # Model này KHÔNG hỗ trợ tool calling
+
+# Do đó ta dùng PydanticOutputParser thay cho .with_structured_output()
+parser = PydanticOutputParser(pydantic_object=BookReview)
+prompt = PromptTemplate(
+    template="Đánh giá cuốn sách sau:\n{query}\n\n{format_instructions}",
+    input_variables=["query"],
+    partial_variables={"format_instructions": parser.get_format_instructions()},
+)
+
+chain = prompt | model | parser
+result = chain.invoke({"query": "Atomic Habits"})
+# (Đã thay thế bằng logic PydanticOutputParser ở trên)
+
 # result là BookReview object, type-safe, validated
 print(result.rating)  # int, không phải string
 ```
@@ -115,7 +130,7 @@ print(result.rating)  # int, không phải string
 **Bài tập:**
 1. Dùng `JsonOutputParser` để ép LLM trả về JSON có 3 trường: `answer`, `confidence` (0-1), `sources` (list).
 2. Tạo Pydantic model `ProductInfo` (name, price, category, in_stock: bool). Dùng `PydanticOutputParser` để extract thông tin sản phẩm từ 1 đoạn text mô tả.
-3. Dùng `.with_structured_output()` với cùng Pydantic model → so sánh code với cách dùng `PydanticOutputParser`.
+3. **Thực hành xử lý lỗi**: Thử gọi lại `.with_structured_output()` với model `groq/compound-mini` để tự trải nghiệm lỗi 400 Bad Request, sau đó hiểu sâu hơn tại sao phải dùng `PydanticOutputParser` như một giải pháp thay thế (fallback).
 4. Thử cố tình tạo prompt mơ hồ để LLM trả sai JSON → implement retry logic thủ công.
 
 **Tiêu chí hoàn thành:** Tự tin tạo Pydantic model cho bất kỳ output nào và ép LLM trả về đúng format.
@@ -298,55 +313,61 @@ LLM output: {"tool": "get_weather", "args": {"city": "Hanoi"}}
 LLM output: "Thời tiết Hà Nội hôm nay 32°C và có mây..."
 ```
 
-- **JSON Schema cho tool** — mỗi tool phải có schema mô tả cho LLM biết tool đó làm gì, nhận tham số gì:
+- **JSON Schema cho tool** — chuẩn OpenAI/Groq, mô tả cho LLM biết tool đó làm gì, nhận tham số gì:
 ```python
 tool_schema = {
-    "name": "get_weather",
-    "description": "Lấy thông tin thời tiết hiện tại của 1 thành phố",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "city": {
-                "type": "string",
-                "description": "Tên thành phố bằng tiếng Anh"
-            }
-        },
-        "required": ["city"]
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Lấy thông tin thời tiết hiện tại của 1 thành phố",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "Tên thành phố bằng tiếng Anh"
+                }
+            },
+            "required": ["city"]
+        }
     }
 }
 ```
 
-- **Cách Anthropic implement** (Claude API trực tiếp, không qua LangChain):
+- **Cách Groq implement** (API trực tiếp, tương tự chuẩn OpenAI, không qua LangChain):
 ```python
-import anthropic
+import os
+import json
+from groq import Groq
 
-client = anthropic.Anthropic()
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 tools = [tool_schema]
 
-response = client.messages.create(
-    model="claude-3-5-haiku-20241022",
-    max_tokens=1024,
+response = client.chat.completions.create(
+    model="llama3-8b-8192",
+    messages=[{"role": "user", "content": "Thời tiết HN?"}],
     tools=tools,
-    messages=[{"role": "user", "content": "Thời tiết HN?"}]
+    tool_choice="auto"
 )
 
+message = response.choices[0].message
 # Kiểm tra LLM có muốn gọi tool không
-if response.stop_reason == "tool_use":
-    tool_use = next(b for b in response.content if b.type == "tool_use")
-    tool_name = tool_use.name       # "get_weather"
-    tool_input = tool_use.input    # {"city": "Hanoi"}
-    tool_result = execute_tool(tool_name, tool_input)  # code của bạn
-    # Gửi kết quả lại...
+if message.tool_calls:
+    for tool_call in message.tool_calls:
+        tool_name = tool_call.function.name       # "get_weather"
+        tool_input = json.loads(tool_call.function.arguments) # {"city": "Hanoi"}
+        tool_result = execute_tool(tool_name, tool_input)  # code của bạn
+        # Cần gửi kết quả (tool_result) lại dưới dạng tin nhắn có role="tool"
 ```
 
 **Tài liệu đọc (BẮT BUỘC):**
-- Anthropic Tool Use Guide: https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
-- Đọc kỹ phần "How tool use works" và "Implementing tool use"
+- Groq Tool Use Guide: https://console.groq.com/docs/tool-use
+- Đọc kỹ phần cấu trúc JSON cho Parameters và cách gửi lại Tool Response.
 
 **Bài tập:**
 1. Viết tool `calculate(expression: str) -> float` — dùng Python `eval()` an toàn để tính biểu thức toán học.
-2. Viết JSON schema cho tool đó. Gửi cho Claude API với câu hỏi "Tính 15% của 350 cộng thêm 42".
-3. Implement vòng lặp tool execution: detect `stop_reason == "tool_use"` → gọi function → gửi kết quả lại → lấy câu trả lời cuối.
+2. Viết JSON schema chuẩn OpenAI/Groq cho tool đó. Gửi cho Groq API với câu hỏi "Tính 15% của 350 cộng thêm 42".
+3. Implement vòng lặp tool execution: detect `message.tool_calls` → gọi function → gửi kết quả lại (với `role: "tool"`, `tool_call_id`) → lấy câu trả lời cuối.
 4. Thêm tool thứ hai `get_current_time(timezone: str) -> str`. Test câu hỏi cần dùng cả 2 tools.
 
 **Tiêu chí hoàn thành:** Giải thích được "LLM có tự chạy function không?" và implement được vòng lặp tool calling từ đầu không dùng framework.
@@ -472,11 +493,8 @@ Xây `tools_api.py` — FastAPI server với endpoint `POST /ask`:
   - **Node** — 1 Python function nhận State -> trả về dict update State (không cần return toàn bộ state).
   - **Edge** — kết nối giữa các nodes. Có 2 loại: edge cố định (A -> B luôn luôn) và conditional edge (A -> B hoặc A -> C tùy điều kiện).
 
-`python
-from typing import TypedDict, Annotated
-from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
 
+```python
 # 1. Định nghĩa State
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]  # add_messages = reducer: append, không replace
@@ -493,6 +511,7 @@ def should_continue(state: AgentState):
     return END           # -> kết thúc
 
 # 3. Xây Graph
+
 graph = StateGraph(AgentState)
 graph.add_node("agent", call_llm)
 graph.add_node("tools", ToolNode(tools))
@@ -500,23 +519,23 @@ graph.set_entry_point("agent")
 graph.add_conditional_edges("agent", should_continue)
 graph.add_edge("tools", "agent")  # sau tools -> quay lại agent
 app = graph.compile()
-`
+```
 
-- **dd_messages reducer** — khi State update messages, không replace list cũ mà append vào. Đây là pattern quan trọng để giữ conversation history trong State.
+- **add_messages reducer** — khi State update messages, không replace list cũ mà append vào. Đây là pattern quan trọng để giữ conversation history trong State.
 
 **Tài liệu đọc (BẮT BUỘC):**
 - LangGraph Quickstart: https://langchain-ai.github.io/langgraph/tutorials/introduction/
 
 **Cài đặt:**
-`ash
+`bash
 pip install langgraph
 `
 
 **Bài tập:**
 1. Xây ReAct agent cơ bản như code trên với 2 tools từ Tuần 8.
-2. Vẽ graph bằng pp.get_graph().draw_mermaid() -> hiểu cấu trúc node/edge.
-3. Dùng pp.invoke() với câu hỏi cần nhiều tool calls -> print từng bước state thay đổi.
-4. Dùng pp.stream() để thấy state update sau mỗi node.
+2. Vẽ graph bằng app.get_graph().draw_mermaid() -> hiểu cấu trúc node/edge.
+3. Dùng app.invoke() với câu hỏi cần nhiều tool calls -> print từng bước state thay đổi.
+4. Dùng `app.stream()` để thấy state update sau mỗi node.
 
 **Tiêu chí hoàn thành:** Giải thích được "LangGraph khác AgentExecutor ở điểm gì?" và tự xây được graph 3 nodes.
 
@@ -531,7 +550,7 @@ pip install langgraph
 - **Human-in-the-Loop (HITL)** — agent dừng lại và chờ người dùng xác nhận trước khi gọi tool nguy hiểm (xóa file, thanh toán, gửi email...). Đây là tính năng quan trọng cho production agent.
 
 - **Interrupt** — cơ chế LangGraph để dừng graph giữa chừng, trả control cho user:
-`python
+```python
 from langgraph.checkpoint.memory import MemorySaver
 
 # Checkpointer lưu state -> cho phép resume
@@ -554,7 +573,7 @@ user_input = input("Cho phép? (y/n): ")
 if user_input == "y":
     # Resume từ điểm dừng
     result = app.invoke(None, config)  # None = tiếp tục từ checkpoint
-`
+```
 
 - **Checkpointer & Thread** — mỗi 	hread_id là 1 conversation riêng biệt. State được persist -> agent có thể resume sau khi bị ngắt (crash, restart...).
 
@@ -578,11 +597,15 @@ if user_input == "y":
 **Mục tiêu:** Xây hệ thống nhiều agent chuyên biệt, có 1 orchestrator điều phối.
 
 **Khái niệm cần nắm:**
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
+```
 
-- **Vì sao Multi-Agent?** — 1 agent đơn với 20 tools sẽ chọn tool kém hơn agent chuyên biệt với 3 tools. Các agent nhỏ, chuyên sâu phối hợp tốt hơn 1 agent "biết tuốt".
-
+- **Vì sao Multi-Agent?** — 1 agent đơn với 20 tools sẽ chọn tool kém hơn agent chuyên biệt với 3 tools. Các agent nhỏ, chuyên sâu phối hợp tốt hơn 1 agent "biết tuốt"
 - **Pattern: Supervisor + Workers:**
-`
+```text
 User Request
      |
 [Supervisor Agent]     -> LLM đọc request, quyết định giao việc cho ai
@@ -592,12 +615,12 @@ User Request
   (web)   (docs)  (python)
      \        |        /
 [Supervisor tổng hợp kết quả -> trả lời User]
-`
+```
 
 - **Subgraph** — 1 LangGraph graph có thể là node của graph khác. Mỗi worker agent là 1 subgraph độc lập.
 
 - **Handoff** — cơ chế 1 agent chuyển việc sang agent khác, kèm theo context cần thiết:
-`python
+```python
 # Supervisor node quyết định
 def supervisor_node(state):
     decision = supervisor_llm.invoke(state["messages"])
@@ -609,7 +632,7 @@ graph.add_conditional_edges(
     lambda state: state["next"],
     {"research": "research_agent", "rag": "rag_agent", "FINISH": END}
 )
-`
+```
 
 **Tài liệu đọc:**
 - LangGraph Multi-Agent: https://langchain-ai.github.io/langgraph/concepts/multi_agent/
@@ -640,7 +663,7 @@ graph.add_conditional_edges(
 
 - **Pattern chuẩn:** Lưu memory vào vector store ở mỗi đầu conversation, retrieve memories liên quan -> inject vào system prompt.
 
-`python
+```python
 # Cuối mỗi conversation, extract và lưu memories
 def save_memories(conversation: list[Message], user_id: str):
     memory_extractor_prompt = "Từ hội thoại này, extract thông tin quan trọng về user..."
@@ -653,13 +676,14 @@ def load_memories(query: str, user_id: str) -> str:
         query, filter={"user_id": user_id}, k=3
     )
     return "\n".join([m.page_content for m in relevant_memories])
-`
+```
 
 **Tài liệu đọc:**
 - DeepLearning.AI Long-Term Agentic Memory: https://www.deeplearning.ai/courses/long-term-agentic-memory-with-langgraph
 
 **Bài tập:**
-1. Implement MemoryStore class: methods save(user_id, memory_text) và etrieve(user_id, query) -> list[str].
+1. Implement MemoryStore class: methods save(user_id, memory_text) và 
+etrieve(user_id, query) -> list[str].
 2. Tích hợp vào agent: đầu conversation retrieve memories -> thêm vào system prompt -> cuối conversation save memories mới.
 3. Test: 2 sessions riêng biệt, session 2 agent nhớ preferences từ session 1.
 4. Implement memory consolidation: nếu có >10 memories cho 1 user, dùng LLM tóm tắt bớt.
@@ -674,7 +698,7 @@ def load_memories(query: str, user_id: str) -> str:
 
 **Kiến trúc:**
 
-`
+```text
 FastAPI
    |
 LangGraph Supervisor
@@ -688,7 +712,7 @@ Long-term Memory (Qdrant)
 Human-in-the-loop (interrupt before action)
    |
 Structured Output (answer + sources + confidence)
-`
+```
 
 **Yêu cầu kỹ thuật:**
 1. **LangGraph**: Supervisor + >=2 worker agents (RAG + Web Search)

@@ -8,7 +8,7 @@
 - Fixed-size chunking
 - Chunk overlap
 - Recursive Character Text Splitting
-- Semantic chunking
+- Semantic chunking 
 - Embedding
 - Dense vector
 - Sparse vector (BM25)

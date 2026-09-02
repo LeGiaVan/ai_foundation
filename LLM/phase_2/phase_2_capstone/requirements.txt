@@ -11,3 +11,4 @@ sentence-transformers
 qdrant-client
 fastembed
 python-multipartpython-multipart
+tiktoken
