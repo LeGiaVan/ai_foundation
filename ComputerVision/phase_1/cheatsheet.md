@@ -31,15 +31,15 @@ img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)   # đổi BGR -> RGB khi cần
 
 ## 2. Color space
 
-| Color space | Dùng khi nào trong QC nhà máy |
-|---|---|
-| **Grayscale** | Edge detection, thresholding hình học, khi màu không quan trọng (VD: kiểm tra vết nứt, méo hình) |
-| **HSV** | Tách lỗi theo **màu sắc** ổn định hơn RGB dưới ánh sáng thay đổi (VD: phát hiện vết ố, đổi màu bề mặt, phân loại theo màu sản phẩm) |
-| **LAB** | Khi cần đo sai lệch màu chính xác (color difference), ít bị ảnh hưởng bởi độ sáng hơn RGB |
+| Color space | Dùng khi nào trong QC nhà máy | Công thức
+|---|---|---
+| **Grayscale** | Edge detection, thresholding hình học, khi màu không quan trọng (VD: kiểm tra vết nứt, méo hình) | Gray = 0.114 * B + 0.587 * G + 0.299 * R => (H, W, 3) -> (H, W)
+| **HSV** | Tách lỗi theo **màu sắc** ổn định hơn RGB dưới ánh sáng thay đổi (VD: phát hiện vết ố, đổi màu bề mặt, phân loại theo màu sản phẩm) | V=max(R,G,B); S=(V-min)/V; H=Góc xoay (0-179) tuỳ màu trội
+| **LAB** | Khi cần đo sai lệch màu chính xác (color difference), ít bị ảnh hưởng bởi độ sáng hơn RGB | RGB -> XYZ -> LAB (Biến đổi phi tuyến mô phỏng mắt người)
 
 ```python
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-hsv  = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)   # H: 0-179, S: 0-255, V: 0-255 (OpenCV convention)
+hsv  = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)  
 ```
 
 **Vì sao HSV tốt hơn RGB khi ánh sáng thay đổi:** trong HSV, kênh **Hue (màu sắc thuần)** tách biệt khỏi **Value (độ sáng)**. Khi đèn nhà máy nhấp nháy/thay đổi cường độ, Value thay đổi nhưng Hue của một vết lỗi màu vẫn tương đối ổn định → threshold theo Hue robust hơn threshold theo RGB.
@@ -54,6 +54,17 @@ hsv  = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)   # H: 0-179, S: 0-255, V: 0-255 (Op
   - **A**: Chạy từ Xanh lục (Green) sang Đỏ (Red).
   - **B**: Chạy từ Xanh lam (Blue) sang Vàng (Yellow).
   - *Tại sao chia A và B như vậy?* Vì võng mạc người hoạt động theo các cặp màu đối lập (bạn không bao giờ thấy màu "xanh lục ngả đỏ"). Đo khoảng cách giữa 2 pixel trong không gian LAB giống hệt như cách mắt người cảm nhận độ lệch màu.
+
+**Use cases thực tế trong QC Nhà máy:**
+1. **Grayscale (Ảnh xám):** Dùng khi **Màu sắc không quan trọng**, chỉ quan tâm đến Hình dáng, Cấu trúc, hoặc Cạnh.
+   - *Đo kích thước / Tìm méo mó:* Kiểm tra vòng đệm kim loại xem có bị méo hay đứt gãy không. Màu kim loại không có ý nghĩa, chuyển sang Gray để tìm viền (Edge Detection) nhanh hơn.
+   - *Đọc Barcode / QR code:* Chỉ quan tâm sự tương phản vạch đen và nền trắng.
+   - *Lợi ích:* Xử lý nhanh gấp 3 lần, tốn ít RAM (1 ma trận thay vì 3).
+2. **HSV:** Dùng khi **Màu sắc quyết định**, nhưng **Ánh sáng môi trường không ổn định** (đèn nhấp nháy, có bóng râm...).
+   - *Phân loại theo màu:* Tách trái cây đỏ (chín) và xanh trên băng chuyền. Dù chạy vào bóng râm (Value giảm), Hue (Màu sắc) vẫn giữ nguyên. Nếu dùng RGB, màu sẽ chuyển xám tối và dễ nhận diện sai.
+   - *Tìm vết rỉ sét/ố vàng:* Vết rỉ sét luôn có màu cam/nâu đặc trưng (Hue cố định), dễ dàng bóc tách bằng HSV bất chấp độ bóng chói của kim loại nền.
+3. **LAB:** Dùng khi **Yêu cầu độ chính xác màu sắc hoàn hảo**, sát với cảm nhận sinh học của mắt người.
+   - *Kiểm tra màu sơn:* Đo xem lô vỏ điện thoại hôm nay có bị lệch màu so với lô tiêu chuẩn hôm qua không. Khoảng cách màu (Euclidean) trong LAB (gọi là Delta-E) phản ánh chính xác 100% cảm nhận của mắt người. RGB không làm được do tính tuyến tính.
 
 ```python
 # Ví dụ: tách vùng màu đỏ (VD: linh kiện lỗi được đánh dấu đỏ) trong HSV
@@ -78,6 +89,8 @@ output(x,y) = Σ Σ kernel(i,j) * input(x+i, y+j)
 - **Kernel size**: 3x3, 5x5... — kernel càng lớn, vùng ảnh hưởng (receptive field) càng rộng, ảnh càng mượt/mất chi tiết.
 - **Stride**: bước nhảy của kernel. Stride=1 giữ nguyên kích thước ảnh (nếu có padding phù hợp).
 - **Padding**: thêm viền (thường là 0) quanh ảnh để kernel xử lý được cả pixel biên. `'valid'` = không pad (ảnh output nhỏ hơn input), `'same'` = pad để output = input.
+  - *Công thức tính viền Padding để Output = Input (với Stride = 1):* **`P = (Kernel_Size - 1) / 2`**
+  - *(VD: Kernel 3x3 $\rightarrow$ cần đắp thêm viền P = 1 pixel. Kernel 5x5 $\rightarrow$ đắp viền P = 2 pixel)*
 
 ```python
 kernel = np.array([[0, -1, 0],
@@ -112,6 +125,11 @@ blurred = cv2.GaussianBlur(img, (5, 5), sigmaX=0)
 
 ## 5. Edge Detection
 
+**Use cases thực tế trong QC Nhà máy:**
+1. **Đo lường kích thước chính xác (Dimensional Measurement):** Dùng Edge Detection tìm ra viền ngoài cùng của một linh kiện cơ khí, tính khoảng cách giữa các đường viền bằng pixel $\rightarrow$ quy đổi ra mm để xem linh kiện gia công có bị sai lệch dung sai không.
+2. **Phát hiện sứt mẻ/nứt viền (Edge Defect Detection):** Quét mép ngoài của màn hình điện thoại hoặc kính cường lực. Nếu là hàng chuẩn, thuật toán sẽ vẽ ra một đường thẳng/cong trơn tru. Nếu có vết sứt mẻ, đường biên sẽ đứt gãy/răng cưa, báo lỗi ngay lập tức.
+3. **Phát hiện vết xước bề mặt (Scratch Detection):** Trên một bề mặt phẳng (như vỏ laptop), vết xước sâu vô tình tạo ra sự "đứt gãy" về ánh sáng đột ngột. Thuật toán tìm biên sẽ làm vết xước sáng bừng lên giữa nền đen.
+
 ### 5a. Sobel — đạo hàm theo hướng x/y
 
 Chính là ứng dụng trực tiếp của khái niệm **đạo hàm** ở Giai đoạn 0: Sobel xấp xỉ tốc độ thay đổi cường độ pixel theo trục x và y. Nơi cường độ thay đổi đột ngột (biên vật thể) → đạo hàm lớn → là edge.
@@ -124,7 +142,16 @@ magnitude = cv2.magnitude(sobel_x, sobel_y)             # độ lớn gradient =
 
 ### 5b. Canny — pipeline edge detection hoàn chỉnh, hay dùng nhất
 
-Canny = Gaussian blur → tính gradient (Sobel) → non-max suppression (giữ lại edge mỏng nhất) → double threshold (phân loại edge mạnh/yếu) → hysteresis (nối edge yếu vào edge mạnh nếu liền kề).
+Thuật toán Canny thực chất là một quy trình (pipeline) gồm 5 bước kết hợp để tìm ra đường biên mỏng và nét nhất:
+1. **Gaussian Blur (Khử nhiễu):** Làm mờ ảnh để triệt tiêu các "hạt sạn/bụi" (noise) trên bề mặt. Nếu không có bước này, thuật toán sẽ nhận nhầm mỗi hạt bụi là một cạnh.
+2. **Tính Gradient / Sobel (Tìm độ dốc cường độ):** Quét qua ảnh để dò những chỗ ánh sáng thay đổi đột ngột. Kết quả bước này thường tạo ra các dải viền khá dày và mờ nhòe.
+3. **Non-max Suppression (Ép mỏng đường viền):** Dò dọc theo các dải viền to ở bước 2, tìm ra điểm ảnh có cường độ thay đổi mạnh nhất (max) làm tâm, và xóa bỏ các pixel lân cận (suppress). Nhờ vậy, dải viền to bị "ép mỏng" dính lại, độ dày chỉ còn đúng 1 pixel nét căng.
+4. **Double Threshold (Phân loại viền qua 2 ngưỡng):** Bạn sẽ cài 2 ngưỡng cắt (VD: threshold1=50, threshold2=150).
+   - Điểm viền > 150: Chắc chắn là viền "xịn" (Strong edge) $\rightarrow$ Giữ lại.
+   - Điểm viền < 50: Chắc chắn là rác $\rightarrow$ Xóa ngay.
+   - Điểm viền nằm giữa 50 - 150: Viền "yếu" (Weak edge), mờ mờ ảo ảo, chưa biết là rác hay viền thật.
+5. **Hysteresis Tracking (Nối biên):** Phán xử nốt bọn "viền yếu" ở bước 4. Quy luật: Nếu đoạn viền yếu này **dính liền** (kết nối) với một viền xịn thì nó được "ăn theo" giữ lại (vì khả năng cao đó là cùng 1 viền nhưng chỗ đó bị khuất sáng). Nếu nó đứng chơ vơ một mình thì xóa đi. Nhờ vậy, các đường viền sẽ liền mạch, không bị đứt đoạn.
+
 
 ```python
 import cv2

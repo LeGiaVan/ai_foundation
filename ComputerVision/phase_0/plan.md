@@ -297,6 +297,13 @@ Trừ mean, chia std giúp dữ liệu về phân phối có tâm quanh 0, độ
 
 ### 5c. Softmax & Cross-entropy — cầu nối giữa xác suất và classification
 
+**Công thức Toán học:**
+- **Softmax:** Biến đổi vector điểm số thô $z_i$ thành xác suất $p_i$:
+  $$ p_i = \frac{e^{z_i}}{\sum_{j} e^{z_j}} $$
+- **Cross-entropy Loss:** Tính hình phạt khi dự đoán, với $y_i$ là nhãn thực tế (1 cho lớp đúng, 0 cho lớp sai) và $p_i$ là xác suất dự đoán:
+  $$ L = -\sum_{i} y_i \log(p_i) $$
+  *(Hiểu đơn giản: Đối với lớp đúng, Loss = $-\log(\text{xác suất dự đoán})$. Do đó: Đoán sai mà quá tự tin $\rightarrow$ phạt cực nặng; đoán đúng mà rụt rè $\rightarrow$ vẫn bị phạt; đoán đúng và tự tin 100% $\rightarrow$ Loss = 0).*
+
 ```python
 def softmax(logits):
     exp = np.exp(logits - np.max(logits))   # trừ max để tránh tràn số (numerical stability)
