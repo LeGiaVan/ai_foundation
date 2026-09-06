@@ -200,11 +200,32 @@ closed  = cv2.morphologyEx(binary_img, cv2.MORPH_CLOSE, kernel)
 
 **Tình huống QC thực tế:** ảnh binary sau threshold có vết trầy bị đứt thành nhiều đoạn nhỏ do nhiễu → dùng **closing** để nối lại thành 1 vùng liền → contour detection (mục 8) mới đếm được đúng là 1 lỗi thay vì 5 lỗi nhỏ giả.
 
+Usecase:
+
+"Opening mở ra khoảng cách giữa các vật — Closing đóng lại khoảng cách đó."
+
+Opening:
+- Mục tiêu: loại bỏ các đốm trắng nhỏ (nhiễu) và tách các vật thể dính nhau qua cầu nối mảnh.
+- Cách thực hiện: thực hiện Erosion (ăn mòn) trước để xóa nhiễu nhỏ, sau đó Dilation (giãn nở) để phục hồi kích thước gần đúng của vùng foreground.
+
+Closing:
+- Mục tiêu: lấp các lỗ/hố nhỏ bên trong vùng foreground, nối các đoạn vỡ rời và làm mịn biên.
+- Cách thực hiện: thực hiện Dilation trước để lấp khe/hốc nhỏ, sau đó Erosion để trả về kích thước gần đúng ban đầu.
+
+Bảng tham khảo nhanh:
+
+| Triệu chứng trên ảnh binary | Phép gợi ý |
+|---|---:|
+| Nhiều đốm trắng nhỏ rải rác | Opening |
+| Hai vật thể dính qua cầu nối mảnh (muốn tách) | Opening |
+| Vết lỗi bị đứt thành nhiều đoạn | Closing |
+| Lỗ hổng đen nhỏ bên trong vùng trắng lớn | Closing |
+| Biên vật thể răng cưa, cần làm mượt | Closing |
 ---
 
-## 7. Thresholding
+## 7. Thresholding - từ 0-255 sang ảnh nhị phân
 
-Chuyển ảnh grayscale → ảnh nhị phân (0/255), bước bắt buộc trước contour detection.
+Chuyển từ ảnh grayscale (1 kênh, giá trị 0–255) sang ảnh nhị phân (0/255) bằng thresholding — bước cần thiết trước khi gọi `findContours` (chỉ vùng foreground != 0 được coi là contour).
 
 ### 7a. Simple threshold
 ```python
@@ -233,7 +254,7 @@ Mỗi vùng nhỏ trong ảnh tự tính ngưỡng riêng dựa trên vùng lân
 |---|---|
 | Ánh sáng đều, ổn định | Simple hoặc Otsu |
 | Ánh sáng thay đổi theo vị trí trong ảnh | Adaptive threshold |
-| Ánh sáng thay đổi theo thời gian (giữa các lần chụp) | Otsu (tự tính lại mỗi ảnh) + cân nhắc calibrate đèn định kỳ |
+| Ánh sáng thay đổi theo thời gian (giữa các lần chụp) | Otsu (tự tính lại mỗi ảnh) + cân nhắc hiệu chuẩn đèn định kỳ |
 
 ---
 
@@ -278,6 +299,43 @@ equalized_clahe = clahe.apply(gray)
 ```
 
 **CLAHE (Contrast Limited Adaptive Histogram Equalization):** chia ảnh thành các ô nhỏ (`tileGridSize`), cân bằng histogram riêng từng ô, giới hạn độ tương phản (`clipLimit`) để tránh khuếch đại nhiễu quá mức — **lựa chọn mặc định nên dùng trong pipeline QC công nghiệp** thay vì `equalizeHist` thường, vì ảnh sáng nhà máy hiếm khi đồng đều toàn khung hình.
+
+Tham khảo tinh chỉnh CLAHE (quick-tips)
+
+| Triệu chứng | Tham số cần chỉnh | Gợi ý hành động |
+|---|---|---|
+| Ảnh vẫn mờ, tương phản chưa đủ rõ sau CLAHE | `clipLimit` | Tăng `clipLimit` một bước (ví dụ 2.0 → 3.0) để tăng độ tương phản |
+| Nhiễu hạt rõ rệt ở vùng background phẳng | `clipLimit` | Giảm `clipLimit` để tránh khuếch đại nhiễu |
+| Xuất hiện đường lưới ô (artefact) sau CLAHE | `tileGridSize` | Giảm số ô (dùng ô lớn hơn) để mờ bớt đường lưới — ví dụ `(8,8)` → `(4,4)` |
+| Ánh sáng thay đổi cục bộ, nhiều vùng sáng-tối | `tileGridSize` | Tăng số ô (ô nhỏ hơn) để CLAHE hoạt động cục bộ hơn — ví dụ `(8,8)` → `(16,16)` |
+| Vật thể / defect nhỏ hơn kích thước một ô | `tileGridSize` | Tăng số ô (ô nhỏ hơn) để không làm mờ mất chi tiết nhỏ |
+
+Gợi ý khởi điểm: `clipLimit=2.0`, `tileGridSize=(8,8)`. Tune bằng kiểm tra trực quan trên vài ảnh mẫu, điều chỉnh từng tham số một và so sánh kết quả.
+
+Pipeline hoàn chỉnh cho contour
+
+<div align="center">
+   <img src="images/full_qc_vision_pipeline.png" alt="Pipeline hoàn chỉnh cho contour" style="max-width:680px; width:100%; height:auto;" />
+   <div style="font-size:0.95rem; color:#666; margin-top:6px;">Hình minh họa: chuỗi tiền xử lý điển hình — grayscale → blur → threshold → morphology → contour</div>
+</div>
+
+### Canny vs Threshold
+
+<div style="display:flex; gap:1.25rem; align-items:flex-start; flex-wrap:wrap;">
+   <div style="flex:1; min-width:260px;">
+      <p><strong>Threshold</strong>: nhạy với giá trị tuyệt đối trên một vùng rộng — phù hợp để phát hiện <em>vùng</em> (blobs) hoặc khi foreground có độ tương phản rõ rệt so với nền.</p>
+      <p><strong>Canny</strong>: nhạy với tốc độ thay đổi cục bộ (gradient peaks) — phù hợp để phát hiện <em>đường mỏng</em> và biên sắc.</p>
+      <ul>
+         <li><strong>Threshold</strong>: dễ áp dụng (Otsu / adaptive), nhưng kém khi ánh sáng không đồng nhất.</li>
+         <li><strong>Canny</strong>: cần Gaussian blur + tinh chỉnh hai ngưỡng (low/high), bù lại cho biên mảnh và nối biên tốt.</li>
+      </ul>
+   </div>
+
+   <div style="flex:1; min-width:260px; text-align:center;">
+      <img src="images/threshold_vs_canny_intensity_profile.png" alt="Intensity profile: Threshold vs Canny" style="max-width:420px; width:100%; height:auto;" />
+      <div style="font-size:0.9rem; color:#666; margin-top:6px;">Đồ thị cường độ theo hàng: threshold chọn mức cố định, Canny nhận các đỉnh gradient.</div>
+   </div>
+</div>
 
 ---
 
