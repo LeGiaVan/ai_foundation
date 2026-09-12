@@ -244,6 +244,12 @@ def mixup(x, y, alpha=0.2):
 | **Early stopping** | Dừng khi val loss không cải thiện | Đơn giản, hiệu quả, không đổi model |
 | **Batch normalization** | Chuẩn hoá activation mỗi layer | Ổn định + có tác dụng điều chuẩn nhẹ |
 
+> [!NOTE]
+> **Quy tắc đặt vị trí Dropout:**
+> - **Fully Connected (Linear Layer):** Vị trí hiệu quả nhất do chứa lượng tham số khổng lồ (dễ overfitting). Thường dùng tỉ lệ cao ($p = 0.4 \rightarrow 0.5$).
+> - **Feature Map (Conv Layer):** Không dùng Dropout thường vì các pixel lân cận có tính liên kết cao. Cần dùng **Spatial Dropout** (`nn.Dropout2d`) để tắt *nguyên một kênh màu (feature map)*, ép mạng không ỷ lại vào một bộ lọc duy nhất. Tỉ lệ thường rất nhỏ ($p = 0.1 \rightarrow 0.2$).
+> - **Pooling Layer:** **Tuyệt đối không dùng**. Pooling không có tham số để học nên không có khái niệm overfitting.
+
 ⚠️ **Bẫy quan trọng với Dropout & BatchNorm:** `model.eval()` và `model.train()` **PHẢI** được gọi đúng lúc. Quên `model.eval()` khi test → dropout vẫn tắt neuron → kết quả không ổn định/không tái lập. Quên `model.train()` khi train → batch norm dùng stats sai.
 
 ```python
@@ -278,16 +284,34 @@ num_features = model.fc.in_features          # 512 cho resnet18
 model.fc = nn.Linear(num_features, NUM_CLASSES)   # thay 1000 lớp ImageNet -> N lớp lỗi của bạn
 ```
 
+> [!NOTE]
+> **Làm sao mô hình biết mình cần phát hiện lỗi gì? (Bản chất Transfer Learning)**
+> Tại thời điểm bạn vừa chạy xong đoạn code trên, mô hình **hoàn toàn KHÔNG BIẾT** lỗi của bạn là gì.
+> Lớp `nn.Linear` bạn vừa gắp bỏ vào là một tờ giấy trắng (chứa các trọng số khởi tạo ngẫu nhiên).
+> Tuy nhiên, các lớp Convolution ở phần thân (nhờ được train sẵn trên hàng triệu ảnh ImageNet) đã là những "chuyên gia" chiết xuất đặc trưng hình ảnh: góc cạnh, vệt xước, kết cấu vật liệu, sự thay đổi màu sắc...
+> Do đó, việc bạn cần làm tiếp theo là **Huấn luyện (Fine-tuning)**. Bạn đưa tập ảnh lỗi thực tế vào. Mạng sẽ tận dụng năng lực phân tích hình ảnh siêu việt có sẵn ở phần thân, và chỉ mất một thời gian rất ngắn để cập nhật (học) tờ giấy trắng `nn.Linear` ở cuối để mapping: *"À, tập hợp các góc cạnh kiểu A này chính là Lỗi Trầy Xước"*.
+
 **2. EfficientNet (2019) — tối ưu hoá hiệu suất/tài nguyên**
 
 - **Compound scaling**: scale **đồng thời** cả depth (số layer), width (số channel), resolution (kích thước ảnh) theo một hệ số — thay vì chỉ tăng 1 chiều.
-- Đạt accuracy cao nhất với chi phí tính toán thấp nhất cho mỗi mức — **rất hợp khi cần chạy realtime trên line nhà máy**.
+- **"Accuracy cao / Chi phí thấp"** không có nghĩa là nó vừa nhanh vừa chính xác hơn tất cả mọi thứ. Ý nghĩa đúng là: *Nếu mình chấp nhận tiêu một lượng tài nguyên (FLOPs, RAM, thời gian xử lý) nhất định, thì EfficientNet sẽ cho ra accuracy tốt nhất so với các mạng khác cùng mức ngân sách đó.* Ví dụ: với 1 giây xử lý cho mỗi ảnh, EfficientNet-B0 đạt 77% accuracy, trong khi ResNet50 (tốn tài nguyên tương đương) chỉ đạt 76%.
 
 ```python
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 model = efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
 model.classifier[1] = nn.Linear(model.classifier[1].in_features, NUM_CLASSES)
 ```
+
+> [!NOTE]
+> **`classifier[1]` là gì?**
+> Khác với ResNet (chỉ có 1 lớp `model.fc` duy nhất ở cuối), phần đầu phân loại của EfficientNet là một **danh sách (Sequential)** gồm nhiều lớp xếp chồng:
+> ```
+> model.classifier = Sequential(
+>     [0] Dropout(p=0.2)           ← lớp thứ 0: chống Overfitting
+>     [1] Linear(1280 → 1000)      ← lớp thứ 1: lớp FC phân loại thật sự
+> )
+> ```
+> Do đó `classifier[1]` là cách truy cập vào đúng **lớp FC ở vị trí số 1** trong danh sách đó (tương tự indexing list Python). Ta thay thế lớp này để đổi từ 1000 lớp ImageNet về `NUM_CLASSES` lớp lỗi của mình. Lớp `Dropout` ở vị trí `[0]` giữ nguyên.
 
 **3. Vision Transformer (ViT, 2020) — kỷ nguyên attention**
 
@@ -467,6 +491,17 @@ val_loader = DataLoader(
 1. Xây `nn.Sequential`: `Conv(3→16,3,pad1) → ReLU → MaxPool(2) → Conv(16→32,3,pad1) → ReLU → MaxPool(2) → Flatten → Linear(32*56*56 → N)`.
 2. Train trên dataset nhị phân "lỗi / không lỗi" (~100 ảnh mỗi lớp), in curve.
 3. Thêm augmentation + dropout → so sánh overfit trước/sau.
+
+> [!NOTE]
+> **Dataset công khai để thực hành (thay thế ảnh nhà máy thực):**
+> Khi chưa đi làm, hình ảnh nhà máy thật không có — đây là điều hoàn toàn bình thường. Dùng dataset benchmark công khai cho mục đích học là đúng hướng. Khi đi làm thật, bạn sẽ áp dụng lại đúng quy trình này lên data thật.
+>
+> | Dataset | Loại lỗi | Link | Ghi chú |
+> |---|---|---|---|
+> | **NEU Steel** *(khuyên dùng cho Bài 1)* | Thép tấm: vết nứt, xước, rỗ bề mặt | [Kaggle NEU](https://www.kaggle.com/datasets/kaustubhdikshit/neu-surface-defect-database) | Nhỏ (1800 ảnh, 6 lớp), train nhanh ngay trên CPU. Có thể gộp 6 lớp thành 2 để làm binary. |
+> | **MVTec AD** | 15 loại vật liệu công nghiệp (da, ốc vít, vải, kim loại...) | [mvtec.com](https://www.mvtec.com/company/research/datasets/mvtec-ad) | Chuẩn nhất thế giới cho bài toán QC, dùng tốt cho Bài 2-3. |
+> | **KolektorSDD2** | Vết nứt linh kiện điện tử | [vicos.si](https://www.vicos.si/resources/kolektorsdd2/) | Gần với bài toán inspection thực tế. |
+> | **Severstal Steel (Kaggle)** | 4 loại lỗi thép tấm, có cả mask | [kaggle.com/c/severstal-steel-defect-detection](https://www.kaggle.com/c/severstal-steel-defect-detection) | Dùng khi học Segmentation ở Phase sau. |
 
 **Bài 2 — Transfer learning + fine-tune:**
 1. Tải `resnet18` pretrained, feature extraction, train.

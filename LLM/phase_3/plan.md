@@ -575,7 +575,7 @@ if user_input == "y":
     result = app.invoke(None, config)  # None = tiếp tục từ checkpoint
 ```
 
-- **Checkpointer & Thread** — mỗi 	hread_id là 1 conversation riêng biệt. State được persist -> agent có thể resume sau khi bị ngắt (crash, restart...).
+- **Checkpointer & Thread** — mỗi thread_id là 1 conversation riêng biệt. State được persist -> agent có thể resume sau khi bị ngắt (crash, restart...).
 
 - **interrupt_after** vs **interrupt_before** — dừng sau hoặc trước khi node chạy xong.
 
@@ -586,7 +586,7 @@ if user_input == "y":
 1. Thêm MemorySaver và interrupt_before=["tools"] vào agent từ Ngày 9.
 2. Test: hỏi câu cần tool -> agent dừng -> bạn in ra đề xuất tool call -> approve/reject.
 3. Implement "reject" flow: khi user từ chối, gửi message "User từ chối hành động này" vào state -> LLM thử cách khác.
-4. Test persistence: chạy graph đến interrupt -> "tắt" (không resume) -> khởi động lại, dùng cùng 	hread_id -> graph nhớ được điểm dừng.
+4. Test persistence: chạy graph đến interrupt -> "tắt" (không resume) -> khởi động lại, dùng cùng thread_id -> graph nhớ được điểm dừng.
 
 **Tiêu chí hoàn thành:** Agent production-safe: không tự ý thực hiện hành động nhạy cảm, state persist qua sessions.
 

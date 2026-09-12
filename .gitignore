@@ -1,4 +1,74 @@
+# ==========================================
+# 1. MÔI TRƯỜNG ẢO & HỆ THỐNG (ENV & SYSTEM)
+# ==========================================
 venv/
+env/
+.venv/
 .env
+.env.*
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# ==========================================
+# 2. DỮ LIỆU & THƯ MỤC DATASET (DATASETS)
+# ==========================================
+# Chặn triệt để mọi thư mục dataset
+**/dataset/
+**/datasets/
+**/data/
+**/NEU-DET/
+**/NEU-CLS/
+**/images/
+**/annotations/
+
+# Chặn các file nén dữ liệu
+*.zip
+*.tar
+*.gz
+*.tar.gz
+*.rar
+*.7z
+
+# ==========================================
+# 3. ĐỊNH DẠNG FILE ẢNH (IMAGES)
+# ==========================================
+# Bỏ qua mọi file ảnh
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tiff
+*.tif
+*.webp
+
+# Ngoại lệ: GIỮ LẠI ảnh minh họa trong tài liệu / cheatsheet
+!**/cheasheet/*.png
+!**/cheasheet/*.jpg
+!**/cheasheet/*.jpeg
+!**/assets/**
+!**/docs/**
+
+# ==========================================
+# 4. TRỌNG SỐ MÔ HÌNH (WEIGHTS & CHECKPOINTS)
+# ==========================================
+*.pt
+*.pth
+*.pwf
+*.bin
+*.onnx
+*.engine
+*.tflite
+*.h5
+*.ckpt
+
+# ==========================================
+# 5. LOGS & CACHE
+# ==========================================
+*.log
+runs/
+wandb/
+.system_generated/

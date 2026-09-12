@@ -4,6 +4,7 @@ import asyncio
 from groq import AsyncGroq
 from dotenv import load_dotenv
 
+load_dotenv()
 # 1. Định nghĩa tool thực tế (Mock) - Dùng async để không block server
 async def get_weather(city: str) -> str:
     """Hàm giả lập lấy thời tiết."""

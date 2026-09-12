@@ -247,6 +247,7 @@ binary = cv2.adaptiveThreshold(
 )
 ```
 Mỗi vùng nhỏ trong ảnh tự tính ngưỡng riêng dựa trên vùng lân cận (`blockSize`) — cực kỳ quan trọng trong nhà máy vì ánh sáng đèn thường không đều trên toàn khung hình (VD: góc camera bị bóng đổ).
+Ý nghĩa của `ADAPTIVE_THRESH_GAUSSIAN_C`: Pixel phải tối hơn mức trung bình C đơn vị thì mới bị coi là vết bẩn. C càng lớn, thuật toán càng khắt khe, rác càng ít.
 
 **Bảng chọn nhanh:**
 
