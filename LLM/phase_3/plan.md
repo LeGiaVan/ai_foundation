@@ -486,50 +486,131 @@ Xây `tools_api.py` — FastAPI server với endpoint `POST /ask`:
 
 **Khái niệm cần nắm:**
 
-- **Vì sao cần LangGraph?** AgentExecutor của LangChain chạy loop đơn giản: LLM -> Tool -> LLM -> Tool... Không có cách để: phân nhánh logic phức tạp, có nhiều agents phối hợp, implement human-in-the-loop, hoặc quay lại bước trước khi cần. LangGraph giải quyết tất cả bằng cách mô hình hóa agent như 1 **State Machine (máy trạng thái)**.
+- **1. Vì sao cần LangGraph? (Sự giới hạn của LangChain AgentExecutor):**
+  - **Cơ chế cũ (`AgentExecutor`):** Chạy một vòng lặp kín dạng hộp đen (black-box loop): `LLM -> parse tool call -> Run Tool -> LLM -> ...` cho đến khi LLM trả về text.
+    - *Khó kiểm soát luồng điều khiển (No fine-grained control):* Không thể chèn các bước tiền/hậu xử lý tùy biến (validation, guardrails, reflection/critique).
+    - *Không hỗ trợ đồ thị có chu trình linh hoạt (Cyclic graphs):* Chỉ có 1 vòng lặp ReAct duy nhất, không thể quay lại bước cụ thể để retry có chiến lược hoặc sửa lỗi.
+    - *Khó triển khai Human-in-the-Loop (HITL):* Rất cồng kềnh nếu muốn tạm dừng workflow chờ con người phê duyệt (approve/reject), sửa state giữa chừng (time-travel) rồi chạy tiếp.
+    - *Không thiết kế cho Multi-Agent:* Khó điều phối nhiều agent chuyên biệt phối hợp hoặc bàn giao công việc (handoffs).
+  - **Giải pháp của LangGraph:** Mô hình hóa ứng dụng LLM dưới dạng một **Directed Graph (Đồ thị có hướng) / State Machine (Máy trạng thái hữu hạn)** hỗ trợ chu trình (cyclic).
+    - Mọi bước tính toán đều tường minh: Lập trình viên kiểm soát 100% từng Node (hành động), từng Edge (điều kiện rẽ nhánh), và State (dữ liệu chia sẻ).
 
-- **3 khái niệm cốt lõi LangGraph:**
-  - **State** — TypedDict chứa toàn bộ thông tin của workflow tại 1 thời điểm. Mỗi node đọc/ghi State.
-  - **Node** — 1 Python function nhận State -> trả về dict update State (không cần return toàn bộ state).
-  - **Edge** — kết nối giữa các nodes. Có 2 loại: edge cố định (A -> B luôn luôn) và conditional edge (A -> B hoặc A -> C tùy điều kiện).
+| Tiêu chí | LangChain AgentExecutor (Cũ) | LangGraph (Hiện đại & Khuyên dùng) |
+| :--- | :--- | :--- |
+| **Mô hình kiến trúc** | Black-box loop (hộp đen, luồng cứng) | State Machine / Directed Graph (mở, linh hoạt 100%) |
+| **Kiểm soát luồng** | Khó can thiệp giữa các bước | Kiểm soát chi tiết từng Node & Edge |
+| **Chu trình (Cycles / Loops)** | Cố định 1 vòng lặp ReAct | Hỗ trợ mọi chu trình: retry, self-correction, review |
+| **Human-in-the-Loop** | Rất khó, can thiệp callback phức tạp | Native Interrupts & Checkpointing (dừng/tiếp tục/time-travel) |
+| **Multi-Agent** | Rất khó mở rộng | Thiết kế chuẩn cho Multi-Agent qua Subgraphs & Handoffs |
+| **Quản lý Trạng thái (State)** | Ẩn bên trong executor | State định kiểu tường minh (`TypedDict`/`Pydantic`) với Reducer |
 
+- **2. Ba khái niệm cốt lõi của LangGraph:**
+  - **State (Trạng thái trung tâm - Single Source of Truth):**
+    - Là cấu trúc dữ liệu chia sẻ qua lại giữa tất cả các nodes trong graph (thường khai báo bằng `TypedDict` hoặc Pydantic `BaseModel`).
+    - Mỗi Node khi chạy sẽ nhận State hiện tại làm đầu vào và trả về phần dữ liệu mới cần cập nhật.
+    - **Cơ chế Reducer (Hàm gộp dữ liệu):**
+      - Mặc định: LangGraph ghi đè (`overwrite`) giá trị mới lên key cũ.
+      - Với danh sách tích lũy như tin nhắn (`messages`), ta cần **nối thêm** (`append`). LangGraph cung cấp reducer tích hợp `add_messages`:
+        - Tự động append message mới vào danh sách hội thoại thay vì ghi đè mất các tin nhắn trước.
+        - Nếu message mới có cùng `id` với message đã có trong State, nó sẽ tự động update/thay thế message cũ (hữu ích cho streaming hoặc sửa tin nhắn).
+  - **Node (Đỉnh - Đơn vị thực thi / Bước xử lý):**
+    - Bản chất là một Python function nhận vào `State` hiện tại và trả về một `dict` chứa **chỉ các key cần cập nhật** (partial update), không cần return toàn bộ state: `def my_node(state: AgentState) -> dict`.
+    - Các loại Node phổ biến:
+      - *LLM Node:* Gọi model để suy luận hoặc sinh tool calls.
+      - *ToolNode:* Node dựng sẵn (`from langgraph.prebuilt import ToolNode`) tự động thực thi các `tool_calls` có trong tin nhắn cuối.
+      - *Custom Node:* Tự viết code xử lý logic, truy vấn database, filter dữ liệu.
+      - *Virtual Nodes:* `START` (điểm bắt đầu của graph) và `END` (điểm kết thúc workflow).
+  - **Edge (Cạnh - Cơ chế điều hướng giữa các nodes):**
+    - Quyết định luồng điều khiển sẽ đi tới Node nào tiếp theo sau khi Node hiện tại hoàn thành.
+    - **Cạnh cố định (Normal Edge — `add_edge(A, B)`):** Luôn chuyển thẳng từ Node A sang Node B vô điều kiện (ví dụ: sau khi chạy `tools` luôn quay lại `agent`).
+    - **Cạnh có điều kiện (Conditional Edge — `add_conditional_edges(source, router_func, path_map)`):**
+      - Luồng điều khiển rẽ nhánh động dựa trên logic của hàm `router_func(state)`.
+      - Hàm router đọc State và trả về chuỗi định danh nhánh tiếp theo (ví dụ: `"tools"` nếu LLM muốn gọi tool, hoặc `END` nếu LLM đã hoàn tất câu trả lời).
 
-```python
-# 1. Định nghĩa State
-class AgentState(TypedDict):
-    messages: Annotated[list, add_messages]  # add_messages = reducer: append, không replace
-
-# 2. Định nghĩa Nodes
-def call_llm(state: AgentState):
-    response = llm_with_tools.invoke(state["messages"])
-    return {"messages": [response]}
-
-def should_continue(state: AgentState):
-    last_message = state["messages"][-1]
-    if last_message.tool_calls:
-        return "tools"  # -> chạy tool
-    return END           # -> kết thúc
-
-# 3. Xây Graph
-
-graph = StateGraph(AgentState)
-graph.add_node("agent", call_llm)
-graph.add_node("tools", ToolNode(tools))
-graph.set_entry_point("agent")
-graph.add_conditional_edges("agent", should_continue)
-graph.add_edge("tools", "agent")  # sau tools -> quay lại agent
-app = graph.compile()
+- **3. Mental Model — Vòng lặp ReAct trong LangGraph:**
+```text
+          +---------+
+          |  START  |
+          +----+----+
+               |
+               v
+          +----+----+
+   +----->|  agent  | (LLM suy luận: gọi tool hay trả lời user?)
+   |      +----+----+
+   |           |
+   |           v [Conditional Edge: should_continue?]
+   |          / \
+   | (Có tool call) \ (Không còn tool call / trả lời xong)
+   |       /           \
+   |      v             v
+   |  +---+---+      +-----+
+   |  | tools |      | END |
+   |  +---+---+      +-----+
+   |      |
+   +------+ (Normal Edge: gửi kết quả tool về cho agent suy luận tiếp)
 ```
 
-- **add_messages reducer** — khi State update messages, không replace list cũ mà append vào. Đây là pattern quan trọng để giữ conversation history trong State.
+- **4. Code chuẩn mẫu ReAct Agent với LangGraph:**
+
+```python
+from typing import TypedDict, Annotated, Literal
+from langchain_core.messages import BaseMessage, HumanMessage
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+
+# 1. Định nghĩa Schema của State
+class AgentState(TypedDict):
+    # add_messages là reducer: append message mới vào list, không ghi đè
+    messages: Annotated[list[BaseMessage], add_messages]
+
+# 2. Định nghĩa Node suy luận của Agent
+def call_llm(state: AgentState) -> dict:
+    """Node gọi LLM để suy luận dựa trên toàn bộ lịch sử tin nhắn trong State."""
+    messages = state["messages"]
+    response = llm_with_tools.invoke(messages)
+    # Trả về partial update: LangGraph sẽ dùng add_messages gộp response vào state["messages"]
+    return {"messages": [response]}
+
+# 3. Định nghĩa hàm Router cho Conditional Edge
+def should_continue(state: AgentState) -> Literal["tools", "__end__"]:
+    """Kiểm tra tin nhắn cuối cùng: LLM muốn gọi tool hay đã trả lời xong?"""
+    last_message = state["messages"][-1]
+    if last_message.tool_calls:
+        return "tools"  # Có tool_calls -> rẽ sang node "tools"
+    return END          # Không có tool_calls -> kết thúc workflow
+
+# 4. Khởi tạo và thiết lập Graph
+workflow = StateGraph(AgentState)
+
+# Đăng ký các nodes
+workflow.add_node("agent", call_llm)
+workflow.add_node("tools", ToolNode(tools))  # ToolNode tự động thực thi các tool_calls
+
+# Thiết lập luồng chạy (Edges)
+workflow.add_edge(START, "agent")             # Điểm vào: START -> node agent
+workflow.add_conditional_edges(
+    "agent",
+    should_continue,
+    {"tools": "tools", END: END}              # Path map định tuyến rõ ràng
+)
+workflow.add_edge("tools", "agent")           # Sau khi chạy tool xong -> quay lại agent để suy luận tiếp
+
+# 5. Compile graph thành một Runnable có thể thực thi
+app = workflow.compile()
+```
+
+- **5. Hai cơ chế quan trọng cần ghi nhớ:**
+  - **`app.compile()`**: Xác thực cấu trúc graph (kiểm tra chu trình hợp lệ, không có node mồ côi) và đóng gói thành một `Runnable` hỗ trợ `.invoke()`, `.stream()` (stream state update từng node), và `.astream()`.
+  - **`add_messages` Reducer**: Quản lý lịch sử hội thoại tự động. Ngoài việc append tin nhắn mới, nó còn hỗ trợ replace tin nhắn nếu trùng `id` và xóa tin nhắn nếu nhận `RemoveMessage(id=...)`.
 
 **Tài liệu đọc (BẮT BUỘC):**
 - LangGraph Quickstart: https://langchain-ai.github.io/langgraph/tutorials/introduction/
 
 **Cài đặt:**
-`bash
+```bash
 pip install langgraph
-`
+```
 
 **Bài tập:**
 1. Xây ReAct agent cơ bản như code trên với 2 tools từ Tuần 8.
