@@ -10,13 +10,21 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableParallel
 from langchain_core.output_parsers import StrOutputParser
 
-# API Key của bạn
-os.environ["GROQ_API_KEY"] = "your_groq_api_key_here"
-import os
+import sys
+from dotenv import load_dotenv
 
+# Đảm bảo in tiếng Việt mượt mà trên console Windows
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+
+# Nạp tự động GROQ_API_KEY và LANGCHAIN_API_KEY từ file .env
+load_dotenv()
+
+# Bật tính năng log tracing lên LangSmith
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_API_KEY"] = "your_langchain_api_key_here" # Dán key của bạn vào đây
-os.environ["LANGCHAIN_PROJECT"] = "Hoc_LangChain"                  # Đặt tên project tùy ý
+if not os.getenv("LANGCHAIN_PROJECT"):
+    os.environ["LANGCHAIN_PROJECT"] = "Hoc_LangChain"
+
 print("="*50)
 print("BƯỚC 1: Kết nối Qdrant và tạo Retriever")
 # 1. Định nghĩa embedding model y hệt như lúc bạn index ở Phase 2
@@ -41,7 +49,7 @@ print("=> Đã tạo xong retriever!\n")
 
 print("="*50)
 print("BƯỚC 2 & 3: Xây RAG Chain bằng LCEL (hỗ trợ sources)")
-model = ChatGroq(model="groq/compound-mini", temperature=0)
+model = ChatGroq(model="openai/gpt-oss-120b", temperature=0)
 
 # Hàm helper gom text từ documents
 def format_docs(docs):

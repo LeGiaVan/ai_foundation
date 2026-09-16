@@ -221,8 +221,14 @@ Trong thị giác máy tính, Object Detection là bài toán **mất cân bằn
 
 ## 7. Bảng so sánh & Quyết định: Khi nào dùng cái nào?
 
+> [!IMPORTANT]
+> ### 💡 Bản chất trực giác cốt lõi (Góc nhìn so sánh nhanh):
+> - **ROC-AUC**: Đo lường **mô hình phân biệt 2 lớp tốt đến đâu**, hoàn toàn không quan tâm tỉ lệ lớp.
+> - **PR-AUC**: Khi mô hình cố **"bắt" được nhiều điểm dương hơn (tăng Recall)**, nó phải **trả giá bằng việc kéo theo bao nhiêu điểm âm sai (giảm Precision)** — PR-AUC đo lường mức đánh đổi (trade-off) đó là **tốt hay tệ**.
+
 | Tiêu chí | ROC-AUC | PR-AUC (Average Precision) |
 |---|---|---|
+| **Cách khác để hiểu (Bản chất)** | **Mô hình phân biệt 2 lớp tốt đến đâu**, không quan tâm tỉ lệ lớp | **Khi mô hình cố "bắt" được nhiều điểm dương hơn (tăng recall)**, nó phải trả giá bằng việc kéo theo bao nhiêu điểm âm sai (giảm precision) — **PR-AUC đo mức đánh đổi đó tốt hay tệ** |
 | **Trục tọa độ** | $Y: \text{TPR}$, $X: \text{FPR}$ | $Y: \text{Precision}$, $X: \text{Recall}$ |
 | **Random Baseline** | Luôn cố định là **đường chéo $= 0.5$** | **Đường ngang $= \frac{P}{P+N}$** (thay đổi theo dữ liệu) |
 | **Sự phụ thuộc vào $TN$** | **Có** (mẫu số của FPR có $TN$) | **Hoàn toàn KHÔNG** quan tâm đến $TN$ |
@@ -292,6 +298,7 @@ print(f"PR-AUC (AP)   : {ap_score:.4f}")
 
 ## 9. Câu thần chú phỏng vấn cần nhớ nằm lòng
 
-> 1. **"ROC dùng khi âm dương cân đối, hoặc quan tâm đến năng lực xếp hạng tổng thể."**
+> 1. **"ROC dùng khi âm dương cân đối, hoặc quan tâm đến năng lực xếp hạng tổng thể (phân biệt 2 lớp tốt đến đâu, bất kể tỉ lệ)."**
 > 2. **"PR dùng khi lớp dương hiếm (imbalance), hoặc khi chi phí của False Alarm (báo động giả) là rất đắt."**
 > 3. **"Object Detection không có TN (True Negative vô hạn), nên ROC-AUC luôn bằng 1 và vô dụng $\implies$ Bắt buộc phải dùng mAP (PR-AUC)!"**
+> 4. **"Bản chất đánh đổi của PR:** Khi cố bắt thêm điểm dương (tăng Recall), cái giá phải trả là kéo theo bao nhiêu điểm âm sai (giảm Precision) — **PR-AUC đo mức đánh đổi đó tốt hay tệ!**"

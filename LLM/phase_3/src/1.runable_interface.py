@@ -1,8 +1,10 @@
 import os
 import time
+from dotenv import load_dotenv
+import time
 
-# API Key của bạn
-os.environ["GROQ_API_KEY"] = "your_groq_api_key_here"
+# Tự động nạp GROQ_API_KEY từ file .env
+load_dotenv()
 
 from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 from langchain_groq import ChatGroq
@@ -10,7 +12,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 
 # Khởi tạo LLM và Parser dùng chung
-llm = ChatGroq(model="groq/compound-mini", temperature=0)
+llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0)
 parser = StrOutputParser()
 
 print("="*50)
@@ -29,6 +31,7 @@ print("BÀI TẬP 3: Thêm .stream()")
 print("Streaming response (in từng chữ): ", end="")
 for chunk in chain2.stream({"topic": "mùa đông"}):
     print(chunk, end="", flush=True)
+    time.sleep(0.5)
 print() # Xuống dòng
 
 print("\n" + "="*50)

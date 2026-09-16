@@ -1,0 +1,14 @@
+path: d:/ai_foundation/ComputerVision/phase_2/B6/SunFlower Detect.v1i.yolov8
+train: train/images
+val: test/images
+test: test/images
+
+nc: 1
+names: ['SunFlower']
+
+roboflow:
+  workspace: sunflower-detect
+  project: sunflower-detect
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/sunflower-detect/sunflower-detect/dataset/1

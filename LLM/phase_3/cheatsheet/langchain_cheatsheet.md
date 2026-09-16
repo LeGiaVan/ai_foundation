@@ -20,14 +20,151 @@
 
 ## 2️⃣ Hướng mở rộng & ví dụ nhanh
 
-| Hướng | Mô tả | Mini‑example |
-|------|------|--------------|
-| **Agent + Tools** | Tạo bot có thể thực hiện tính toán, truy vấn DB, v.v. | ```python\nfrom langchain.agents import initialize_agent, Tool\n\ndef calc(a,b): return a+b\n\ntool = Tool(name="calc", func=calc, description="Cộng 2 số")\nagent = initialize_agent([tool], llm, agent="zero-shot-react-description")\nres = agent.run("Cộng 12 và 7")\nprint(res)\n``` |
-| **RAG với multi‑vector** | Dùng nhiều embedding (text + metadata) để nâng độ chính xác. | ```python\nfrom langchain_community.vectorstores import Qdrant\nemb_text = OpenAIEmbeddings(); emb_meta = CohereEmbeddings()\nvec = Qdrant.from_documents(docs, emb_text, collection_name="texts")\nmeta_vec = Qdrant.from_documents(meta_docs, emb_meta, collection_name="meta")\nretriever = MultiVectorRetriever(vectorstore=vec, metadata_store=meta_vec)\nqa = RetrievalQA.from_chain_type(llm, retriever=retriever)\n``` |
-| **LangGraph workflow** | Xây dựng pipeline: Retrieve → Rerank → Generate → Post‑process. | ```python\nfrom langgraph.graph import StateGraph\ndef retrieve(state): ...\ndef rerank(state): ...\ndef generate(state): ...\nworkflow = StateGraph(lambda s:s)\nworkflow.add_node("retrieve", retrieve)\nworkflow.add_node("rerank", rerank)\nworkflow.add_node("gen", generate)\nworkflow.add_edge("retrieve","rerank")\nworkflow.add_edge("rerank","gen")\napp = workflow.compile()\napp.invoke({"query":"Giải thích RAG"})\n``` |
-| **Streaming + UI** | Kết hợp `streaming=True` và WebSocket để hiển thị câu trả lời từng token. | ```python\nllm = ChatOpenAI(streaming=True, callbacks=[WebSocketCallback()])\nchain = LLMChain(llm=llm, prompt=prompt)\n# client receives chunks via WS\n``` |
-| **LangSmith tracing** | Ghi lại toàn bộ pipeline, xem cost & latency trên dashboard. | ```python\nfrom langsmith import traceable\n@traceable()\ndef rag_pipeline(query):\n    docs = retriever.get_relevant_documents(query)\n    answer = llm.invoke(... )\n    return answer\n``` |
-| **Evaluation loop** | Tự động tạo dataset đánh giá, chạy `ChatEvaluationChain`, thu thập score. | ```python\nevals = []\nfor q,a,g in test_set:\n    score = eval_chain.evaluate({"question":q,"answer":a,"ground_truth":g})\n    evals.append(score)\nprint(sum(evals)/len(evals))\n``` |
+### 🔹 1. Agent + Tools (Gọi hàm / Công cụ)
+Tạo bot có khả năng dùng Tools để tính toán, gọi API hoặc truy vấn dữ liệu.
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
+# 1. Định nghĩa tool với decorator @tool
+@tool
+def add(a: int, b: int) -> int:
+    """Cộng 2 số nguyên a và b."""
+    return a + b
+
+tools = [add]
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+# 2. Khởi tạo ReAct Agent (chuẩn hiện đại với LangGraph prebuilt)
+agent = create_react_agent(llm, tools)
+res = agent.invoke({"messages": [("user", "Tính 12 + 7 bằng bao nhiêu?")]})
+print(res["messages"][-1].content)
+```
+
+---
+
+### 🔹 2. RAG với Multi-Vector Retriever
+Dùng nhiều vector / embedding (tách riêng summary và full document) để tăng độ chính xác tìm kiếm.
+
+```python
+from langchain_community.vectorstores import Chroma
+from langchain.retrievers.multi_vector import MultiVectorRetriever
+from langchain.storage import InMemoryByteStore
+from langchain_openai import OpenAIEmbeddings
+
+# Vectorstore lưu tóm tắt (summary vectors), docstore lưu nội dung gốc đầy đủ
+byte_store = InMemoryByteStore()
+vectorstore = Chroma(collection_name="summaries", embedding_function=OpenAIEmbeddings())
+
+retriever = MultiVectorRetriever(
+    vectorstore=vectorstore,
+    byte_store=byte_store,
+    id_key="doc_id"
+)
+```
+
+---
+
+### 🔹 3. LangGraph Workflow (Đồ thị có State)
+Xây dựng pipeline dạng đồ thị trạng thái: Retrieve → Rerank → Generate.
+
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+class RAGState(TypedDict):
+    query: str
+    docs: list[str]
+    answer: str
+
+def retrieve(state: RAGState):
+    return {"docs": ["Tài liệu 1", "Tài liệu 2"]}
+
+def generate(state: RAGState):
+    return {"answer": f"Đã trả lời câu hỏi: '{state['query']}'"}
+
+# Khởi tạo Graph
+workflow = StateGraph(RAGState)
+workflow.add_node("retrieve", retrieve)
+workflow.add_node("generate", generate)
+
+# Định nghĩa luồng chạy
+workflow.add_edge(START, "retrieve")
+workflow.add_edge("retrieve", "generate")
+workflow.add_edge("generate", END)
+
+app = workflow.compile()
+output = app.invoke({"query": "LangGraph hoạt động như thế nào?"})
+print(output["answer"])
+```
+
+---
+
+### 🔹 4. Streaming Token (Thời gian thực)
+Truyền kết quả từng token về UI / WebSocket ngay khi LLM đang sinh văn bản.
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+llm = ChatOpenAI(model="gpt-4o-mini", streaming=True)
+prompt = ChatPromptTemplate.from_template("Giải thích ngắn gọn: {topic}")
+chain = prompt | llm
+
+# Stream trực tiếp từng chunk token
+for chunk in chain.stream({"topic": "Tại sao cần Streaming?"}):
+    print(chunk.content, end="", flush=True)
+```
+
+---
+
+### 🔹 5. LangSmith Tracing (Giám sát & Debug)
+Ghi lại chi tiết execution trace, latency, token usage và cost lên dashboard LangSmith.
+
+```python
+import os
+from langsmith import traceable
+
+# Cấu hình biến môi trường
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_API_KEY"] = "lsv2_pt_your_api_key_here"
+
+@traceable(name="My RAG Pipeline")
+def rag_pipeline(query: str):
+    docs = retriever.invoke(query)
+    response = chain.invoke({"query": query, "context": docs})
+    return response
+```
+
+---
+
+### 🔹 6. Evaluation (Đánh giá chất lượng mô hình)
+Chạy bộ test dataset đánh giá đầu ra (độ chính xác, ground truth) bằng LLM-as-a-judge.
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+eval_prompt = ChatPromptTemplate.from_template("""
+Bạn là giám khảo chấm điểm. So sánh câu trả lời của AI với đáp án chuẩn:
+- Câu hỏi: {question}
+- AI trả lời: {answer}
+- Đáp án chuẩn: {ground_truth}
+
+Hãy chấm điểm từ 1 đến 10 và giải thích ngắn gọn:
+""")
+
+eval_chain = eval_prompt | ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+score = eval_chain.invoke({
+    "question": "RAG viết tắt của gì?",
+    "answer": "Retrieval-Augmented Generation",
+    "ground_truth": "Retrieval-Augmented Generation"
+})
+print(score.content)
+```
 
 ---
 

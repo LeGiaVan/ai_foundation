@@ -1,5 +1,6 @@
 import os
 import json
+import sys
 from pydantic import BaseModel, Field
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
@@ -8,24 +9,14 @@ from langchain_core.output_parsers import (
     JsonOutputParser
 )
 from langchain_core.exceptions import OutputParserException
+from dotenv import load_dotenv
 
-# API Key của bạn
-os.environ["GROQ_API_KEY"] = "your_groq_api_key_here"
+# Đảm bảo in tiếng Việt mượt mà trên console Windows
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
 
-model = ChatGroq(model="groq/compound-mini", temperature=0)
-
-print("="*50)
-print("BÀI TẬP 1: JsonOutputParser")
-json_parser = JsonOutputParser()
-json_prompt = PromptTemplate(
-    template="Trả lời câu hỏi sau. Định dạng JSON bắt buộc phải có 3 keys: 'answer', 'confidence', 'sources'.\nCâu hỏi: {query}\n\n{format_instructions}",
-    input_variables=["query"],
-    partial_variables={"format_instructions": json_parser.get_format_instructions()},
-)
-json_chain = json_prompt | model | json_parser
-res_json = json_chain.invoke({"query": "LangChain được viết bằng ngôn ngữ lập trình nào?"})
-print("Kết quả JSON:", json.dumps(res_json, indent=2, ensure_ascii=False))
-print("Kiểu dữ liệu nhận được:", type(res_json))
+load_dotenv()
+model = ChatGroq(model="openai/gpt-oss-120b", temperature=0)
 
 print("\n" + "="*50)
 print("BÀI TẬP 2: PydanticOutputParser với ProductInfo")
@@ -35,34 +26,44 @@ class ProductInfo(BaseModel):
     category: str = Field(description="Thuộc nhóm danh mục sản phẩm nào")
     in_stock: bool = Field(default=True, description="Còn hàng hay không, True/False")
 
+class ReviewProduct(BaseModel):
+    name: str = Field(description="Tên sản phẩm")
+    price: int = Field(description="Giá tiền của sản phẩm (số nguyên)")
+    category: str = Field(description="Thuộc nhóm danh mục sản phẩm nào")
+    score: int = Field(description="Đánh giá sản phẩm theo thang từ 0 - 10")
+
 pydantic_parser = PydanticOutputParser(pydantic_object=ProductInfo)
-pydantic_prompt = PromptTemplate(
-    template="Trích xuất thông tin sản phẩm từ đoạn mô tả sau:\n{query}\n\n{format_instructions}",
-    input_variables=["query"],
-    partial_variables={"format_instructions": pydantic_parser.get_format_instructions()},
-)
-pydantic_chain = pydantic_prompt | model | pydantic_parser
+# pydantic_prompt = PromptTemplate(
+#     template="Trích xuất thông tin sản phẩm từ đoạn mô tả sau:\n{query}\n\n{format_instructions}",
+#     input_variables=["query"],
+#     partial_variables={"format_instructions": pydantic_parser.get_format_instructions()},
+# )
+# pydantic_chain = pydantic_prompt | model | pydantic_parser
 
-text_desc = "Cửa hàng bán Laptop Dell XPS 13 cực đẹp, giá 25000000 VNĐ. Máy thuộc dòng laptop văn phòng. Hiện tại kho đang tạm hết hàng."
-res_pydantic = pydantic_chain.invoke({"query": text_desc})
-print("Tên:", res_pydantic.name)
-print("Giá:", res_pydantic.price)
-print("Loại:", res_pydantic.category)
-print("Còn hàng:", res_pydantic.in_stock)
-print("Kiểu dữ liệu nhận được:", type(res_pydantic))
+# text_desc = "Cửa hàng bán Laptop Dell XPS 13 cực đẹp, giá 25000000 VNĐ. Máy thuộc dòng laptop văn phòng. Hiện tại kho đang tạm hết hàng."
+# res_pydantic = pydantic_chain.invoke({"query": text_desc})
+# print(pydantic_parser.get_format_instructions())
+# print("Tên:", res_pydantic.name)
+# print("Giá:", res_pydantic.price)
+# print("Loại:", res_pydantic.category)
+# print("Còn hàng:", res_pydantic.in_stock)
+# print("Kiểu dữ liệu nhận được:", type(res_pydantic))
 
 
-print("\n" + "="*50)
-print("BÀI TẬP 3: Lỗi 400 Bad Request với .with_structured_output()")
-print("Thử gọi .with_structured_output() với model groq/compound-mini...")
-try:
-    structured_model = model.with_structured_output(ProductInfo)
-    structured_model.invoke("Đánh giá sản phẩm test")
-except Exception as e:
-    print("=> Bắt được lỗi mong muốn khi dùng with_structured_output!")
-    print("=> Tên lỗi:", type(e).__name__)
-    print("=> Nội dung:", e)
-    print("=> GIẢI THÍCH: Model 'groq/compound-mini' không có khả năng tool calling ở dưới nền. Vì thế ta phải dùng PydanticOutputParser để 'ép' model trả về JSON thông qua Prompt Engineering thay vì dùng hàm tiện ích này.")
+# print("\n" + "="*50)
+# print("BÀI TẬP 3: Lỗi 400 Bad Request với .with_structured_output()")
+# print("Thử gọi .with_structured_output() với model openai/gpt-oss-120b...")
+# resp = res_pydantic.model_dump_json(indent=2)
+# print(type(resp))
+# try:
+#     structured_model = model.with_structured_output(ReviewProduct)
+#     res = structured_model.invoke(f"Chấm điểm sản phẩm sau:\n{resp}")
+#     print(type(res))
+# except Exception as e:
+#     # print("=> Bắt được lỗi mong muốn khi dùng with_structured_output!")
+#     print("=> Tên lỗi:", type(e).__name__)
+#     print("=> Nội dung:", e)
+#     # print("=> GIẢI THÍCH: Model 'groq/compound-mini' không có khả năng tool calling ở dưới nền. Vì thế ta phải dùng PydanticOutputParser để 'ép' model trả về JSON thông qua Prompt Engineering thay vì dùng hàm tiện ích này.")
 
 
 print("\n" + "="*50)
