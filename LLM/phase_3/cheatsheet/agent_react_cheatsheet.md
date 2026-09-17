@@ -230,3 +230,9 @@ response = agent_with_memory.invoke(
 3. Router Agent      : [Phân loại ý định người dùng] -> [Rẽ nhánh sang Chain chuyên biệt]
 4. Multi-Agent       : Nhiều Agent chuyên biệt (Coder, Reviewer, Tester) nói chuyện với nhau (LangGraph)
 ```
+
+---
+
+## 8. Tài liệu tham khảo mở rộng
+- Chi tiết về cấu trúc các loại Message và kỹ thuật trích xuất Chain of Thought: Xem [langchain_messages_and_cot_cheatsheet.md](file:///d:/ai_foundation/LLM/phase_3/cheatsheet/langchain_messages_and_cot_cheatsheet.md).
+

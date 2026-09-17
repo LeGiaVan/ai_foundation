@@ -1,0 +1,52 @@
+{
+  "messages": [
+    {
+      "content": "23*59 bằng bao nhiêu",
+      "additional_kwargs": {},
+      "response_metadata": {},
+      "type": "human",
+      "name": null,
+      "id": "41384eb0-cd57-4c96-bfda-e0462cf1f977"
+    },
+    {
+      "content": "**Kết quả:**  \n\n\\(23 \\times 59 = 1\\,357\\)\n\nVậy 23 nhân 59 bằng **1 357**.",
+      "additional_kwargs": {
+        "reasoning_content": "User asks: \"23*59 bằng bao nhiêu\". Simple multiplication. Compute 23*59 = 23*60 - 23 = 1380 - 23 = 1357. Provide answer in Vietnamese, nicely formatted. No need for tools, can compute mentally."
+      },
+      "response_metadata": {
+        "token_usage": {
+          "completion_tokens": 100,
+          "prompt_tokens": 339,
+          "total_tokens": 439,
+          "completion_time": 0.21151253,
+          "completion_tokens_details": {
+            "reasoning_tokens": 58
+          },
+          "prompt_time": 0.014243426,
+          "prompt_tokens_details": null,
+          "queue_time": 0.332647194,
+          "total_time": 0.225755956
+        },
+        "model_name": "openai/gpt-oss-120b",
+        "system_fingerprint": "fp_3166198c1d",
+        "service_tier": "on_demand",
+        "finish_reason": "stop",
+        "logprobs": null,
+        "model_provider": "groq"
+      },
+      "type": "ai",
+      "name": null,
+      "id": "lc_run--01a0ada7-5abe-73e2-9ae2-0bf8e9bdb928-0",
+      "tool_calls": [],
+      "invalid_tool_calls": [],
+      "usage_metadata": {
+        "input_tokens": 339,
+        "output_tokens": 100,
+        "total_tokens": 439,
+        "output_token_details": {
+          "reasoning": 58
+        }
+      }
+    }
+  ]
+}

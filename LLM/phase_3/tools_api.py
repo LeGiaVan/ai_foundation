@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
-
+from typing import Optional
 from langchain_groq import ChatGroq
 from langchain_core.tools import tool
 from langchain.agents import create_agent
@@ -28,7 +28,7 @@ app = FastAPI(title="LangChain Tools API - Week 8")
 # --- KHỞI TẠO RAG ---
 try:
     qdrant_client = QdrantClient("http://localhost:6333")
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    embeddings = HuggingFaceEmbeddings(model_name="./models/all-MiniLM-L6-v2")
     vector_store = QdrantVectorStore(
         client=qdrant_client, 
         collection_name="rag_docs",
@@ -105,6 +105,7 @@ agent = create_agent(
     system_prompt=(
         "Bạn là một trợ lý thông minh và phân tích dữ liệu tốt. "
         "Bạn có các công cụ (tools) để tìm kiếm dữ liệu, tính toán, định dạng bảng và xem giờ. "
+        "Trước khi gọi bất kỳ công cụ (tool) nào, hãy luôn suy nghĩ (Thought) ngắn gọn giải thích lý do cần công cụ đó. "
         "Hãy luôn trả lời bằng tiếng Việt và trình bày thật đẹp mắt."
     )
 )
@@ -115,9 +116,10 @@ class AskRequest(BaseModel):
     question: str
 
 class ToolStep(BaseModel):
-    tool_name: str
-    tool_input: dict
-    tool_output: str
+    thought: Optional[str] = None  # 🧠 Suy nghĩ / lý do AI quyết định gọi tool này
+    tool_name: str                 # ⚡ Tên tool
+    tool_input: dict               # 📥 Tham số
+    tool_output: str               # 👁️ Kết quả trả về
 
 class AskResponse(BaseModel):
     final_answer: str
@@ -129,27 +131,51 @@ async def ask_agent(req: AskRequest):
         # Gọi Agent
         inputs = {"messages": [{"role": "user", "content": req.question}]}
         result = agent.invoke(inputs)
-        
-        # Parse Messages để lấy Chain of Thought
+        # Lưu cấu trúc chi tiết ra file JSON cùng cấp để soi / debug
+        printable_result = {
+            "messages": [m.model_dump() for m in result["messages"]]
+        }
+        output_file = os.path.join(os.path.dirname(__file__), "agent_result.json")
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(printable_result, f, indent=2, ensure_ascii=False)
+
+        # Parse Messages để lấy Chain of Thought (Thought -> Action -> Observation)
         messages = result["messages"]
         final_answer = messages[-1].content
         
         chain_of_thought = []
         tool_calls_map = {}
+        pending_thought = None
         
         for msg in messages:
-            # Nếu là lệnh gọi tool từ LLM
-            if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-                for tc in msg.tool_calls:
-                    tool_calls_map[tc["id"]] = {
-                        "name": tc["name"],
-                        "args": tc["args"]
-                    }
+            # Nếu là phản hồi từ AI
+            if isinstance(msg, AIMessage):
+                # 🧠 Trích xuất suy nghĩ (Thought)
+                # Model reasoning (như gpt-oss-120b trên Groq) lưu trong additional_kwargs['reasoning_content']
+                # Các model khác lưu trong content
+                thought = None
+                if hasattr(msg, "additional_kwargs") and msg.additional_kwargs.get("reasoning_content"):
+                    thought = msg.additional_kwargs["reasoning_content"].strip()
+                elif isinstance(msg.content, str) and msg.content.strip():
+                    thought = msg.content.strip()
+                
+                # ⚡ Nếu có lệnh gọi tool
+                if getattr(msg, "tool_calls", None):
+                    for tc in msg.tool_calls:
+                        tool_calls_map[tc["id"]] = {
+                            "name": tc["name"],
+                            "args": tc["args"],
+                            "thought": thought or pending_thought
+                        }
+                    pending_thought = None
+                else:
+                    pending_thought = thought
                     
-            # Nếu là kết quả trả về từ tool
+            # 👁️ Nếu là kết quả trả về từ tool
             elif isinstance(msg, ToolMessage):
                 tc_info = tool_calls_map.get(msg.tool_call_id, {})
                 chain_of_thought.append(ToolStep(
+                    thought=tc_info.get("thought"),
                     tool_name=msg.name,
                     tool_input=tc_info.get("args", {}),
                     tool_output=msg.content

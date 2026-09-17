@@ -12,6 +12,7 @@ __pycache__/
 .ipynb_checkpoints/
 .vscode/
 .idea/
+models/
 
 # ==========================================
 # 2. DỮ LIỆU & THƯ MỤC DATASET (DATASETS)
