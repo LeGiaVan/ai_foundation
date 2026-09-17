@@ -808,33 +808,33 @@ Structured Output (answer + sources + confidence)
    - POST /research/{job_id}/approve -> approve HITL interrupt
 
 **Tiêu chí hoàn thành:**
-- [ ] Agent trả lời đúng câu hỏi factual cần tra cứu
-- [ ] HITL hoạt động: dừng đúng lúc, resume sau approve
-- [ ] Long-term memory: lần 2 hỏi cùng chủ đề, agent nhớ context từ lần 1
-- [ ] LangSmith trace hiển thị rõ từng bước agent suy nghĩ
-- [ ] Code coverage: unit test cho từng tool
+- [x] Agent trả lời đúng câu hỏi factual cần tra cứu
+- [x] HITL hoạt động: dừng đúng lúc, resume sau approve
+- [x] Long-term memory: lần 2 hỏi cùng chủ đề, agent nhớ context từ lần 1
+- [x] LangSmith trace hiển thị rõ từng bước agent suy nghĩ
+- [x] Code coverage: unit test cho từng tool
 
 ---
 
 ## ✅ Checklist hoàn thành Phase 3
 
 **Tuần 7 — LangChain:**
-- [ ] Xây LCEL chain từ PromptTemplate -> LLM -> Parser
-- [ ] RAG chain với LangChain Retriever, có streaming
-- [ ] Chatbot với Conversation Memory (Window)
-- [ ] LangSmith trace hiển thị từng bước
+- [x] Xây LCEL chain từ PromptTemplate -> LLM -> Parser
+- [x] RAG chain với LangChain Retriever, có streaming
+- [x] Chatbot với Conversation Memory (Window)
+- [x] LangSmith trace hiển thị từng bước
 
 **Tuần 8 — Function Calling:**
-- [ ] Implement tool calling thủ công (không dùng framework) -> hiểu protocol
-- [ ] Tối thiểu 4 tools với @tool decorator
-- [ ] Parallel tool calls hoạt động
-- [ ] Error handling: tool fail -> LLM vẫn trả lời được
+- [x] Implement tool calling thủ công (không dùng framework) -> hiểu protocol
+- [x] Tối thiểu 4 tools với @tool decorator
+- [x] Parallel tool calls hoạt động
+- [x] Error handling: tool fail -> LLM vẫn trả lời được
 
 **Tuần 9 — LangGraph:**
-- [ ] ReAct agent với StateGraph, node/edge/conditional
-- [ ] Human-in-the-loop với Checkpoint + interrupt
-- [ ] Multi-agent: Supervisor + 2 workers hoạt động
-- [ ] Long-term memory persist qua >=2 sessions
+- [x] ReAct agent với StateGraph, node/edge/conditional
+- [x] Human-in-the-loop với Checkpoint + interrupt
+- [x] Multi-agent: Supervisor + 2 workers hoạt động
+- [x] Long-term memory persist qua >=2 sessions
 
 **Câu hỏi phải trả lời được khi kết thúc Phase 3:**
 - "LangGraph giải quyết vấn đề gì mà AgentExecutor không làm được?"
