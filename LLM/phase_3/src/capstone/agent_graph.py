@@ -78,6 +78,11 @@ def supervisor_node(state: ResearchState):
     content = response.content
     decision = "FINISH"
     match = re.search(r"DECISION:\s*(RAG|WEB|CALC|FINISH)", content, re.IGNORECASE)
+    # Bỏ hết các từ không liên quan: 
+    # - DECISION: là từ khóa
+    # - \s* là khoảng trắng
+    # - (RAG|WEB|CALC|FINISH) là các lựa chọn (chỉ 1 trong số đó)
+    # - re.IGNORECASE là không phân biệt chữ hoa chữ thường
     if match:
         decision = match.group(1).upper()
         

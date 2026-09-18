@@ -13,6 +13,7 @@ if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+# BackgroundTasks khai báo với Instance là hãy chạy ngầm Task này
 from langchain_core.messages import HumanMessage, AIMessage
 
 try:

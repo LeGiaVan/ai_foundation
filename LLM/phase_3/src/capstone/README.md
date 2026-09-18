@@ -11,6 +11,7 @@ The following diagram illustrates the cyclical state machine, worker routing, an
 <p align="center">
   <img src="architechture.png" alt="System Architecture" width="520" />
 </p>
+
 ### High-Level Workflow
 1. **User Request Submission**: A research query is submitted via the asynchronous FastAPI endpoint (`POST /research`).
 2. **Supervisor Orchestration**: The `supervisor` node injects long-term user preferences from the `MemoryStore` and plans the next optimal step.

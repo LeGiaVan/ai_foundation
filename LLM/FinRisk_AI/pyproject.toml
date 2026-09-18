@@ -1,0 +1,61 @@
+[project]
+name = "finrisk-ai"
+version = "0.1.0"
+description = "Hệ thống Phân tích Báo cáo Tài chính & Thẩm định Rủi ro Tín dụng Tự động hóa"
+requires-python = ">=3.11"
+
+dependencies = [
+    # ── Core LangChain / LangGraph ──────────────────────────────────
+    "langgraph>=0.2.0",
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+    "langchain-groq>=0.2.0",              # Phase học: LLM miễn phí
+    "langchain-anthropic>=0.2.0",         # Phase production
+    "langchain-openai>=0.2.0",            # Phase production (fallback)
+
+    # ── Config & Validation ──────────────────────────────────────────────
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+
+    # ── Phase 2: RAG & Vector DB ─────────────────────────────────────────
+    "qdrant-client>=1.9.0",
+    "fastembed>=0.3.0",                  # BGE-M3 dense embedding (auto-download model)
+    "pdfplumber>=0.11.0",               # Bóc tách bảng biểu tài chính từ PDF
+    "sentence-transformers>=3.0.0",    # Cross-Encoder reranker (bge-reranker-v2-m3)
+    "tiktoken>=0.7.0",                  # Đếm token khi chunking
+    # "llmlingua>=0.2.0",                # Context compression (Phase 2+, bỏ qua lúc học)
+
+    # ── Phase 3: Observability (uncomment khi cần) ──────────────────────
+    # "langfuse>=2.0.0",
+    # "ragas>=0.1.0",
+
+    # ── Phase 4: Production API (uncomment khi cần) ─────────────────────
+    # "fastapi>=0.110.0",
+    # "uvicorn[standard]>=0.27.0",
+    # "redis>=5.0.0",
+    # "celery>=5.3.0",
+    # "slowapi>=0.1.9",                   # Rate limiting
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.4.0",                        # Linter + formatter (thay thế flake8 + black)
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP"]      # Error, pyFlakes, Imports, Naming, Upgrade
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

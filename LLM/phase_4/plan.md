@@ -122,36 +122,10 @@ Một hệ thống RAG gồm 2 thành phần chính: **Retriever** (Truy xuất)
 
 **G-Eval** là khung đánh giá đột phá được nhóm nghiên cứu của Microsoft giới thiệu (*Liu et al., 2023: "G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment"*). Đây là phương pháp đưa độ tương quan giữa LLM Judge và chuyên gia con người (Human Alignment) từ mức $\sim 0.35$ lên **hơn $0.51$ (Spearman $\rho$)**, vượt xa hoàn toàn các metric truyền thống (BLEU, ROUGE).
 
-```mermaid
-flowchart LR
-    subgraph Step1["1. Tiêu chí"]
-        direction TB
-        Criteria["Tiêu chí đánh giá thô<br/><i>(Faithfulness, Accuracy)</i>"]
-    end
+<p align="center">
+  <img src="G-Eval.png" alt="System Architecture" width="800" />
+</p>
 
-    subgraph Step2["2. Sinh CoT Rubric"]
-        direction TB
-        LLMGen["LLM Meta-Prompt"] --> Steps["Evaluation Steps<br/><i>(Quy trình chấm 1->4)</i>"]
-    end
-
-    subgraph Step3["3. Đánh giá & Suy luận"]
-        direction TB
-        Inputs["Context + Query + Ans"] --> LLMJudge["LLM Judge (GPT-4o)"]
-        Steps -.-> LLMJudge
-        LLMJudge --> Reason["Sinh đoạn giải trình<br/><b>Reasoning</b>"]
-    end
-
-    subgraph Step4["4. Tính điểm Kỳ vọng"]
-        direction TB
-        Logprobs["Token Logprobs<br/><i>(Token '1' đến '5')</i>"] --> Softmax["Chuẩn hóa Softmax<br/><b>P(score = i)</b>"]
-        Softmax --> Expectation["Điểm số kỳ vọng<br/><b>Score = Σ i × P(i)</b><br/><i>(VD: 3.74 / 5.0)</i>"]
-    end
-
-    Criteria --> LLMGen
-    Reason --> Logprobs
-```
-
----
 
 #### 1. Tại sao LLM-as-a-Judge thông thường thất bại mà G-Eval lại thành công?
 * **Cách chấm truyền thống (Naïve Scoring):** Hỏi LLM: *"Chấm điểm câu trả lời từ 1 đến 5"*.
@@ -423,71 +397,707 @@ def test_rag_faithfulness_and_relevancy():
 
 ## 6. OBSERVABILITY TOÀN DIỆN VỚI LANGFUSE
 
-### 6.1. Các thành phần trong Langfuse Tracing
-1. **Trace:** Đại diện cho toàn bộ một lượt yêu cầu của người dùng từ lúc gửi câu hỏi đến lúc nhận câu trả lời cuối cùng.
-2. **Span:** Đại diện cho từng bước xử lý trung gian (như gọi Qdrant Vector Search, bước Rerank, hoặc tiền xử lý văn bản).
-3. **Generation:** Đo lường cuộc gọi trực tiếp vào LLM (ghi lại Model, System Prompt, User Prompt, Output Tokens, Input Tokens, Estimated Cost).
-4. **Score / Feedback:** Lưu trữ điểm số do người dùng đánh giá (Upvote/Downvote) hoặc do test Ragas chấm tự động.
+### 6.1. Tại sao cần LLM Observability & Khác biệt với Traditional APM?
 
-### 6.2. Cấu hình biến môi trường `.env`
-```env
-LANGFUSE_PUBLIC_KEY="pk-lf-..."
-LANGFUSE_SECRET_KEY="sk-lf-..."
-LANGFUSE_HOST="https://cloud.langfuse.com"   # Hoặc http://localhost:3000 nếu self-hosted
+Trong các hệ thống phần mềm truyền thống (Web/Microservices), các công cụ APM (Application Performance Monitoring) như **Datadog**, **Prometheus**, **New Relic** tập trung vào các chỉ số hạ tầng và HTTP: CPU/RAM, Request/Second (RPS), HTTP 4xx/5xx, và latency p95.
+
+Tuy nhiên, với hệ thống **GenAI / RAG / Multi-Agent**, HTTP status `200 OK` **không đồng nghĩa với câu trả lời thành công**. Ứng dụng vẫn có thể trả về HTTP 200 nhưng nội dung bị **Hallucination** (bịa đặt số liệu), vi phạm quy định pháp lý, hoặc tiêu tốn chi phí token vượt ngân sách.
+
+#### Bảng so sánh Traditional APM vs. LLM Observability (Langfuse)
+
+| Tiêu chí | Traditional APM (Datadog, Prometheus) | LLM Observability (Langfuse) |
+| :--- | :--- | :--- |
+| **Đơn vị phân tích cốt lõi** | HTTP Request, Database Query, Function Call | **Trace, Span, Generation, Event, Session, User** |
+| **Bản chất dữ liệu I/O** | Dữ liệu có cấu trúc (JSON, SQL records, số định lượng) | **Ngôn ngữ tự nhiên (Prompt, System Prompt, RAG Context, Completion)** |
+| **Định nghĩa "Lỗi" (Failure)** | Crash, Exception, HTTP 500, DB Timeout | **Hallucination, Context Mismatch, Toxicity, Jailbreak, Model Drift** |
+| **Chỉ số đo lường hiệu năng** | Latency, RPS, Memory Leak, Network I/O | **TTFT (Time-to-first-token), Tokens/sec, Cost ($), Faithfulness, Relevancy** |
+| **Đơn vị chi phí** | Giờ chạy server (vCPU/RAM/Cloud node) | **Input Tokens, Output Tokens, Cached Tokens theo từng Model ID** |
+| **Vòng lặp cải tiến** | Bug Fix, Refactor Code, Tối ưu SQL query | **Prompt Versioning, Few-shot curation, Reranker tuning, Golden Dataset export** |
+
+---
+
+### 6.2. Mô hình Dữ liệu & Cấu trúc Phân cấp (Langfuse Core Data Model)
+
+Langfuse tổ chức dữ liệu giám sát theo một **cây thực thi phân cấp (Execution Tree / Directed Acyclic Graph)**, phản ánh chính xác từng bước xử lý bên trong một pipeline RAG hoặc chuỗi suy luận của Agent:
+
+```text
+Trace: [ID: tr-9a8b7c] - "Thẩm định rủi ro tín dụng Công ty CP Tập đoàn Hòa Phát (HPG)"
+│ (Metadata: user_id="bank_analyst_01", session_id="sess_credit_2024", environment="production")
+│
+├── 1. Span: "preprocess_and_rewrite_query" (Duration: 85ms)
+│     └── Input: "HPG nợ bao nhiêu?" -> Output: "Tỷ lệ nợ/Vốn chủ sở hữu và tổng nợ vay HPG 2023"
+│
+├── 2. Span: "hybrid_retrieval" (Duration: 340ms)
+│     ├── Span: "dense_search_qdrant" (Duration: 120ms, top_k=10, score > 0.75)
+│     └── Span: "sparse_search_bm25" (Duration: 45ms, top_k=10)
+│
+├── 3. Span: "cross_encoder_rerank" (Duration: 210ms)
+│     └── Model: "BAAI/bge-reranker-large", In: 20 chunks -> Out: Top 3 Chunks chuẩn nhất
+│
+├── 4. Event: "pii_masking_triggered" (Timestamp: 10:15:32.450, Zero-duration)
+│     └── Log: "Đã che giấu số tài khoản và thông tin cá nhân của người đại diện pháp luật"
+│
+├── 5. Generation: "llm_financial_synthesis" (Duration: 1.45s, TTFT: 320ms)
+│     ├── Model: "llama-3.3-70b-versatile" (Provider: Groq)
+│     ├── Prompt Template: "credit_risk_evaluation:v3" (Compiled with variables)
+│     ├── Usage: { Prompt: 1,420 tokens, Completion: 380 tokens, Total: 1,800 tokens }
+│     ├── Cost: $0.00124 USD
+│     └── Output: "Dựa trên BCTC kiểm toán 2023 của Hòa Phát, tỷ lệ D/E đạt 0.78..."
+│
+└── 6. Score: [Evaluations & Feedback]
+      ├── Score (Implicit/Offline): "ragas_faithfulness" = 0.96 (Đánh giá qua LLM-as-a-Judge)
+      ├── Score (Explicit/Online): "user_feedback" = 1 (Người dùng bấm 👍 Thumbs Up)
+      └── Score (Latency): "latency_p95_check" = PASSED (< 2.5s)
 ```
 
-### 6.3. Tích hợp Langfuse vào FastAPI & LangChain / LangGraph
+#### 5 Khái niệm Cốt lõi:
+1. **Trace (Gốc - Root Request):** Đại diện cho một chu trình hoàn chỉnh từ lúc client gửi request đến lúc trả kết quả cuối cùng. Lưu trữ: `trace_id`, `name`, `user_id`, `session_id`, `tags`, `release`, `metadata`.
+2. **Span (Công đoạn xử lý):** Đại diện cho một khoảng thời gian thực thi một công việc cụ thể không gọi LLM trực tiếp (ví dụ: query vector database, chạy reranking, gọi API bên thứ ba, xử lý logic Python).
+3. **Generation (Cuộc gọi LLM chuyên biệt):** Span đặc biệt dùng riêng cho các lệnh gọi LLM. Bắt buộc ghi nhận: `model`, `model_parameters` (temperature, top_p), `prompt` (messages format), `completion`, `usage` (prompt_tokens, completion_tokens), và chi phí tiền tệ tự động tính toán.
+4. **Event (Sự kiện tức thời):** Một điểm đánh dấu trong dòng thời gian không có thời lượng (duration = 0), dùng để ghi log nghiệp vụ quan trọng (ví dụ: phát hiện PII, kích hoạt fallback model, cache hit).
+5. **Score (Chỉ số đánh giá chất lượng):** Lưu điểm số định lượng (`value: 0.0 - 1.0` hoặc `value: 1 - 5`) hoặc phân loại categorical (`value: "correct" / "hallucinated"`). Điểm này có thể gắn trực tiếp vào Trace hoặc vào từng Generation cụ thể.
+
+---
+
+### 6.3. Kiến trúc Triển khai: Self-Hosted vs. Langfuse Cloud
+
+Doanh nghiệp có thể chọn 1 trong 2 hình thức:
+* **Langfuse Cloud (Managed SaaS):** Tiện lợi, không cần bảo trì hạ tầng, free tier 50k events/tháng, tuân thủ SOC 2 Type II và GDPR.
+* **Langfuse Self-Hosted (On-Premise / Private Cloud VPC):** Bắt buộc đối với các tổ chức Ngân hàng, Fintech, Y tế nơi dữ liệu tài chính không được phép ra internet công cộng.
+
+#### File `docker-compose.yml` Chuẩn Production (Self-Hosted Enterprise)
+
+Kiến trúc Langfuse v3+ sử dụng **PostgreSQL** (lưu entities, users, prompts) phối hợp với **ClickHouse** (cơ sở dữ liệu Columnar chuyên dụng để query hàng triệu Traces/Spans tốc độ cao):
+
+```yaml
+version: "3.8"
+
+services:
+  # 1. Ứng dụng Web UI & Ingestion API Server
+  langfuse-server:
+    image: ghcr.io/langfuse/langfuse:3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://langfuse:langfuse_secure_pwd@postgres:5432/langfuse
+      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_SECRET=a_very_secret_key_change_me_in_production_min_32_chars
+      - SALT=salt_for_encryption_keys_min_16_chars
+      - CLICKHOUSE_URL=http://clickhouse:8123
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=clickhouse_secure_pwd
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TELEMETRY_ENABLED=false
+      - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=true
+    restart: always
+
+  # 2. Cơ sở dữ liệu Transactional (Users, Metadata, Prompt Registry)
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=langfuse_secure_pwd
+      - POSTGRES_DB=langfuse
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # 3. Cơ sở dữ liệu Columnar Tốc độ cao (Traces, Spans, Generations Analytics)
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    environment:
+      - CLICKHOUSE_DB=default
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+      - CLICKHOUSE_PASSWORD=clickhouse_secure_pwd
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # 4. Hàng đợi đệm bất đồng bộ (Asynchronous Event Ingestion Queue)
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+  redis_data:
+```
+
+#### Cấu hình Biến môi trường `.env` Ứng dụng Backend
+
+```env
+# URL đến máy chủ Langfuse (Cloud hoặc Self-hosted)
+LANGFUSE_HOST="https://cloud.langfuse.com"   # Hoặc "http://localhost:3000" nếu chạy docker local
+LANGFUSE_PUBLIC_KEY="pk-lf-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+LANGFUSE_SECRET_KEY="sk-lf-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Tối ưu hóa hiệu năng Ingestion (Không block API chính)
+LANGFUSE_FLUSH_INTERVAL=0.5                  # Flush events mỗi 0.5s
+LANGFUSE_MAX_RETRIES=3                       # Số lần thử lại nếu mạng chập chờn
+LANGFUSE_THREADS=4                           # Số worker threads xử lý log ngầm
+```
+
+---
+
+### 6.4. Các Phương thức Tích hợp Code Thực chiến (3 Integration Strategies)
+
+#### Chiến lược 1: Dùng Python Native Decorator `@observe()` (Khuyến nghị cho Custom Code)
+Decorator `@observe()` của Langfuse tự động liên kết các hàm lồng nhau thành cây Trace/Span mà không cần truyền biến context thủ công.
 
 ```python
 import os
-from fastapi import FastAPI
-from langfuse import Langfuse
+import time
+from typing import List, Dict, Any
+from langfuse.decorators import observe, langfuse_context
+from groq import Groq
+
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+# 1. Hàm con: Đo lường Vector Database Query (Tự động thành 1 Span)
+@observe()
+def retrieve_financial_context(query: str, top_k: int = 3) -> List[str]:
+    # Ghi chú thêm metadata vào Span hiện tại
+    langfuse_context.update_current_observation(
+        metadata={"search_type": "hybrid", "top_k": top_k, "index": "fin_reports_2023"}
+    )
+    time.sleep(0.12)  # Giả lập thời gian truy vấn Qdrant
+    return [
+        "Trích BCTC 2023 HPG: Vốn chủ sở hữu đạt 102.000 tỷ VNĐ, Nợ phải trả đạt 78.000 tỷ VNĐ.",
+        "Trích báo cáo thường niên: Tỷ lệ an toàn thanh khoản và hệ số D/E duy trì ở mức an toàn 0.76 lần."
+    ]
+
+# 2. Hàm con: Đo lường lệnh gọi LLM (Chỉ định rõ as_type="generation")
+@observe(as_type="generation")
+def call_llm_judge(prompt: str, model_name: str = "llama-3.3-70b-versatile") -> str:
+    response = groq_client.chat.completions.create(
+        model=model_name,
+        messages=[
+            {"role": "system", "content": "Bạn là chuyên gia thẩm định tín dụng tài chính cấp cao."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.1
+    )
+    output_text = response.choices[0].message.content
+    
+    # BẮT BUỘC: Cập nhật thông số Generation để Langfuse tự tính chi phí tiền USD
+    langfuse_context.update_current_observation(
+        model=model_name,
+        usage={
+            "input": response.usage.prompt_tokens,
+            "output": response.usage.completion_tokens,
+            "total": response.usage.total_tokens
+        },
+        metadata={"finish_reason": response.choices[0].finish_reason}
+    )
+    return output_text
+
+# 3. Hàm gốc: Root Trace bao trọn toàn bộ quy trình
+@observe()
+def evaluate_company_risk(company_tax_id: str, query: str, user_id: str, session_id: str) -> Dict[str, Any]:
+    # Định danh Trace cấp cao nhất
+    langfuse_context.update_current_trace(
+        name="Credit_Risk_Assessment_Workflow",
+        user_id=user_id,
+        session_id=session_id,
+        tags=["risk_dept", "corporate_banking", "hpg"],
+        metadata={"tax_id": company_tax_id, "app_version": "2.4.0"}
+    )
+    
+    # Bước 1: Retrieval (Span)
+    contexts = retrieve_financial_context(query=query)
+    
+    # Bước 2: Event (Đánh dấu logic quan trọng)
+    langfuse_context.score_current_trace(
+        name="retrieval_chunk_count",
+        value=len(contexts),
+        comment="Số lượng văn bản context cung cấp cho LLM"
+    )
+    
+    # Bước 3: LLM Generation
+    prompt_payload = f"Contexts:\n{chr(10).join(contexts)}\n\nCâu hỏi: {query}"
+    final_analysis = call_llm_judge(prompt=prompt_payload)
+    
+    return {"analysis": final_analysis, "contexts_used": len(contexts)}
+```
+
+---
+
+#### Chiến lược 2: Tích hợp Liền Mạch với LangChain & LangGraph (`CallbackHandler`)
+Khi sử dụng **LangGraph** (xây dựng Agentic Workflow như trong dự án `FinRisk AI`), chỉ cần truyền `CallbackHandler` vào `RunnableConfig`. Toàn bộ các node, edge, prompt template, tool calls đều được log tự động.
+
+```python
+import os
+from typing import TypedDict, List
 from langfuse.callback import CallbackHandler
 from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import StateGraph, END
 
-app = FastAPI(title="FinRisk AI with Observability")
-
-# Khởi tạo Callback Handler cho LangChain
+# Khởi tạo CallbackHandler đọc tự động cấu hình từ biến môi trường
 langfuse_handler = CallbackHandler(
     public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
     secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
     host=os.getenv("LANGFUSE_HOST")
 )
 
-@app.post("/analyze")
-async def analyze_report(query: str, user_id: str):
-    # Truyền callback trực tiếp vào hàm invoke
-    llm = ChatGroq(model="llama-3.3-70b-versatile")
+# 1. Định nghĩa State của Graph
+class AgentState(TypedDict):
+    question: str
+    contexts: List[str]
+    report: str
+
+# 2. Định nghĩa các Nodes
+def retrieve_node(state: AgentState):
+    # Trích xuất dữ liệu giả lập từ Qdrant
+    return {"contexts": ["Thông tư 41/2016/TT-NHNN quy định tỷ lệ CAR tối thiểu là 8%."]}
+
+def synthesize_node(state: AgentState):
+    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
+    prompt = f"Dựa vào tài liệu: {state['contexts']}, trả lời câu hỏi: {state['question']}"
+    # Langfuse Handler sẽ tự động lồng generation này vào trong graph trace
+    response = llm.invoke([HumanMessage(content=prompt)])
+    return {"report": response.content}
+
+# 3. Dựng Workflow Graph
+builder = StateGraph(AgentState)
+builder.add_node("retriever", retrieve_node)
+builder.add_node("synthesizer", synthesize_node)
+builder.set_entry_point("retriever")
+builder.add_edge("retriever", "synthesizer")
+builder.add_edge("synthesizer", END)
+graph = builder.compile()
+
+# 4. Thực thi Graph với Langfuse Handler gắn kèm Metadata
+async def run_finrisk_graph(user_query: str, analyst_id: str, session_id: str):
+    config = {
+        "callbacks": [langfuse_handler],
+        "metadata": {
+            "user_id": analyst_id,
+            "session_id": session_id,
+            "pipeline": "finrisk_v1_graph"
+        },
+        "tags": ["production", "vietnam_regulation"]
+    }
     
-    response = await llm.ainvoke(
-        [HumanMessage(content=query)],
-        config={
-            "callbacks": [langfuse_handler],
-            "metadata": {"user_id": user_id, "environment": "production"}
-        }
+    result = await graph.ainvoke(
+        {"question": user_query, "contexts": [], "report": ""},
+        config=config
     )
-    
-    return {"result": response.content}
+    return result["report"]
 ```
 
-### 6.4. Quản lý Phiên bản Prompt (Prompt Management & Versioning)
-Thay vì hardcode prompt trong mã nguồn, quản lý trên Langfuse để thay đổi prompt không cần redeploy code:
+---
+
+#### Chiến lược 3: Drop-in Replacement cho OpenAI SDK / Groq / LiteLLM
+Nếu codebase đang sử dụng thư viện `openai` chuẩn, chỉ cần thay thế lệnh import:
+
+```python
+# Thay vì: from openai import OpenAI
+from langfuse.openai import OpenAI
+import os
+
+# Tự động bắt 100% token, cost, prompt, parameters mà không cần chỉnh sửa bất kỳ dòng code nào khác
+client = OpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key=os.getenv("GROQ_API_KEY")
+)
+
+completion = client.chat.completions.create(
+    model="llama-3.3-70b-versatile",
+    messages=[{"role": "user", "content": "Tóm tắt rủi ro thanh khoản ngân hàng"}],
+    name="financial_risk_summary",           # Tên trace trên Langfuse
+    user_id="analyst_nguyen_van_a",          # Định danh người dùng
+    metadata={"department": "Risk_Auditing"} # Metadata tùy biến
+)
+print(completion.choices[0].message.content)
+```
+
+---
+
+### 6.5. Đo lường Hiệu năng & Giám sát Chi phí (Latency, Tokens & Cost Tracking)
+
+#### 1. Bóc tách Độ trễ Chuyên sâu (Deep Latency Profiling)
+Người dùng cảm nhận tốc độ của chatbot RAG thông qua **Time to First Token (TTFT)** chứ không phải tổng thời gian hoàn thành (Total Generation Time).
+
+```text
+|<--------------------------- Total Latency (2.45s) -------------------------->|
+|-- Retrieval (180ms) --|-- Rerank (210ms) --|-- TTFT (420ms) --|-- Stream (1.64s) --|
+```
+* **TTFT (Time to First Token):** Thời gian từ khi user bấm Enter đến khi chữ cái đầu tiên hiển thị trên màn hình. Ngưỡng chuẩn production: **$\text{TTFT} < 1.2\text{s}$**.
+* **Bottleneck Diagnosis:**
+  - Nếu `Retrieval Latency` > 800ms: Kiểm tra chỉ mục HNSW trên Qdrant/Milvus hoặc hạ `top_k`.
+  - Nếu `Rerank Latency` > 500ms: Chuyển model Reranker từ CPU sang GPU hoặc giảm số chunks đầu vào từ 30 xuống 10.
+  - Nếu `TTFT` > 2s: Prompt quá dài hoặc LLM Provider đang nghẽn hàng đợi (cần cân nhắc chuyển sang nhà cung cấp suy luận tốc độ cao như Groq, Cerebras hoặc vLLM local).
+
+#### 2. Phân loại Token & Prompt Caching
+Langfuse bóc tách chi tiết lượng token trong mỗi Generation:
+* **Prompt Tokens (Input):** Số lượng token trong câu hỏi + System prompt + Ngữ cảnh tài liệu RAG.
+* **Completion Tokens (Output):** Số lượng token do LLM sinh ra.
+* **Cached Tokens (Prompt Caching):** Khi sử dụng các model như Anthropic Claude 3.5 Sonnet hoặc OpenAI GPT-4o, việc cache các đoạn tài liệu dài (như Thông tư 41 hay BCTC 100 trang) giúp giảm **50%–80% chi phí** và giảm **80% độ trễ**. Langfuse tự động hiển thị số lượng Cached Tokens này trên bảng dashboard.
+
+#### 3. Cấu hình Bảng giá Tuỳ chỉnh (Custom Model Pricing)
+Với các mô hình mã nguồn mở tự host (vLLM / Ollama) hoặc chạy qua các gateway nội bộ, có thể cấu hình bảng giá riêng trên Langfuse Settings:
+* Ví dụ: Model `llama-3.3-70b-versatile` trên Groq:
+  - Input: `$0.59 / 1M tokens`
+  - Output: `$0.79 / 1M tokens`
+* **Công thức tính tự động của Langfuse:**
+  $$\text{Total Cost} = \left( \frac{\text{Input Tokens}}{1,000,000} \times P_{\text{input}} \right) + \left( \frac{\text{Output Tokens}}{1,000,000} \times P_{\text{output}} \right)$$
+
+---
+
+### 6.6. Vòng lặp Phản hồi & Đánh giá Trực tuyến (Feedback Loops & Online Evaluation)
+
+Hệ thống Observability thực sự chỉ hoàn thiện khi có vòng lặp khép kín: **Giám sát $\rightarrow$ Phát hiện lỗi $\rightarrow$ Thu thập phản hồi $\rightarrow$ Cải tiến dữ liệu chuẩn**.
+
+```
+    ┌────────────────┐          ┌───────────────────┐          ┌────────────────────┐
+    │  Người dùng    │  Gửi 👍  │ API Backend       │  Score   │ Langfuse Dashboard │
+    │  hoặc LLM Judge├─────────►│ ghi nhận Feedback ├─────────►│ Lưu trữ & Alert    │
+    └────────────────┘          └───────────────────┘          └─────────┬──────────┘
+                                                                         │
+                                                                         ▼
+                                                               ┌────────────────────┐
+                                                               │ Xuất Trace lỗi làm │
+                                                               │ Golden Dataset mới │
+                                                               └────────────────────┘
+```
+
+#### 1. Thu thập Phản hồi Người dùng Thực tế (Explicit User Feedback)
+Khi người dùng bấm nút Thumbs Up / Down hoặc để lại nhận xét trên giao diện Web, Frontend gọi API gửi `trace_id` về server:
 
 ```python
 from langfuse import Langfuse
 
 langfuse = Langfuse()
 
-# Kéo prompt đã được versioning từ Langfuse Cloud
-credit_prompt = langfuse.get_prompt("credit_risk_assessment_v2")
-
-# Sử dụng prompt template đã biên soạn
-formatted_prompt = credit_prompt.compile(
-    company_name="Tập đoàn Hòa Phát",
-    debt_ratio="1.25"
-)
+def record_user_feedback(trace_id: str, is_helpful: bool, reason: str = ""):
+    """
+    Ghi nhận phản hồi của Chuyên viên thẩm định ngân hàng vào Trace tương ứng
+    """
+    langfuse.score(
+        trace_id=trace_id,
+        name="user_feedback",
+        value=1.0 if is_helpful else 0.0,
+        data_type="BOOLEAN",
+        comment=reason
+    )
 ```
+
+#### 2. Tự động Đánh giá Trực tuyến trên Production (Online LLM-as-a-Judge)
+Không thể chạy toàn bộ 100% request qua Ragas vì tốn chi phí. Thay vào đó, thiết lập **Sampling 5%–10%** các request trên production để chạy một Background Task chấm điểm `Faithfulness`:
+
+```python
+from fastapi import BackgroundTasks
+from langfuse import Langfuse
+from groq import Groq
+
+langfuse = Langfuse()
+groq_client = Groq()
+
+async def evaluate_trace_faithfulness_task(trace_id: str, query: str, context: str, answer: str):
+    """
+    Background worker: Sử dụng mô hình Judge nhỏ để chấm điểm trung thực
+    """
+    prompt_judge = f"""
+    Hãy đối chiếu Câu trả lời với Ngữ cảnh tài liệu và chấm điểm độ trung thực (Faithfulness) từ 0.0 đến 1.0.
+    Chỉ trả về duy nhất 1 con số thập phân.
+    Ngữ cảnh: {context}
+    Câu trả lời: {answer}
+    """
+    judge_res = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt_judge}],
+        temperature=0.0
+    )
+    
+    score_val = float(judge_res.choices[0].message.content.strip())
+    
+    # Ghi điểm trực tiếp vào Trace trên Langfuse
+    langfuse.score(
+        trace_id=trace_id,
+        name="online_faithfulness",
+        value=score_val,
+        comment="Đánh giá tự động ngầm bởi Llama-3.3-70B Judge"
+    )
+```
+
+#### 3. Tinh lọc Dataset từ Production Traces (Curating Golden Dataset)
+Trên giao diện Langfuse:
+1. Tạo bộ lọc: Tìm tất cả các Trace có `user_feedback == 0` (Thumbs Down) HOẶC `online_faithfulness < 0.7`.
+2. Bấm nút **"Add to Dataset"** $\rightarrow$ Lưu vào bộ `finrisk_hard_failures_dataset`.
+3. Bộ dataset này được xuất tự động (Export) vào thư mục `tests/golden_dataset/` để làm bài test hồi quy (Regression Test) trong quy trình CI/CD.
+
+---
+
+### 6.7. Quản lý Prompt Tập trung & A/B Testing (Prompt Management & Versioning)
+
+#### Rủi ro khi Hardcode Prompt trong Mã nguồn:
+* Mọi chỉnh sửa câu chữ prompt đều phải tạo Pull Request, chờ review, build Docker image, và redeploy toàn bộ cụm server.
+* Không thể phân quyền cho chuyên viên phân tích tài chính (Domain Experts / Prompt Engineers) tự tinh chỉnh prompt.
+* Không thể rollback tức thì về phiên bản cũ khi prompt mới gây ảo giác nghiêm trọng.
+
+#### Giải pháp: Langfuse Prompt Registry
+Quản lý toàn bộ prompt trên giao diện web của Langfuse với cơ chế **Semantic Versioning**, gán nhãn môi trường (`production`, `staging`), và **In-Memory Caching (TTL)** để đảm bảo độ trễ gần như bằng 0.
+
+```python
+from langfuse import Langfuse
+import os
+
+langfuse = Langfuse()
+
+def generate_risk_report(company_name: str, financial_metrics_json: str):
+    # 1. Kéo Prompt được gắn nhãn 'production' từ Langfuse (Có cache in-memory 5 phút)
+    # Không tạo thêm HTTP request mỗi lần invoke hàm!
+    prompt_template = langfuse.get_prompt(
+        name="financial_risk_report_prompt",
+        label="production",
+        cache_ttl_seconds=300
+    )
+    
+    # 2. Biên dịch template với các biến số nghiệp vụ
+    compiled_messages = prompt_template.compile(
+        company_name=company_name,
+        metrics=financial_metrics_json,
+        current_year="2024"
+    )
+    
+    # 3. Sử dụng với LLM và tự động liên kết Trace với Phiên bản Prompt đó
+    from langfuse.openai import OpenAI
+    client = OpenAI()
+    
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=compiled_messages,
+        # LIÊN KẾT PROMPT VỚI GENERATION:
+        # Giúp Langfuse thống kê được prompt version nào cho điểm cao hơn trên Dashboard A/B testing
+        langfuse_prompt=prompt_template
+    )
+    
+    return response.choices[0].message.content
+```
+
+#### Quy trình A/B Testing Prompt trên Production:
+1. **Prompt Version 1 (Control):** System Prompt truyền thống, liệt kê tiêu chí thẩm định.
+2. **Prompt Version 2 (Treatment):** System Prompt bổ sung kỹ thuật Chain-of-Thought và ép trích dẫn điều khoản luật.
+3. Trong code backend: Dùng hàm băm `hash(user_id) % 2` để chia 50% traffic gọi `label="v1"` và 50% traffic gọi `label="v2"`.
+4. Trên Langfuse Dashboard: So sánh trực tiếp 2 phiên bản qua biểu đồ:
+   - Tỷ lệ `user_feedback` tích cực (Win Rate).
+   - Tỷ lệ vi phạm ảo giác (`faithfulness`).
+   - Lượng token tiêu thụ trung bình.
+
+---
+
+### 6.8. File Mẫu Thực Chiến Hoàn Chỉnh: `finrisk_observability_pipeline.py`
+
+File mã nguồn Python hoàn chỉnh dưới đây minh họa việc tích hợp toàn diện: **FastAPI Streaming + Langfuse Decorator + Background Scoring + HTTP Feedback Endpoint + Graceful Shutdown**:
+
+```python
+"""
+finrisk_observability_pipeline.py
+Hệ thống Thẩm định Tín dụng Tự động với Giám sát Toàn diện Langfuse
+"""
+
+import os
+import time
+import asyncio
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator, Dict, Any
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Header
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from langfuse import Langfuse
+from langfuse.decorators import observe, langfuse_context
+from groq import AsyncGroq
+
+# 1. Khởi tạo Clients
+langfuse = Langfuse()
+groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+
+# 2. Quản lý vòng đời FastAPI (Graceful Flush Langfuse khi tắt App)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("🚀 FinRisk AI Observability Service is starting...")
+    yield
+    print("🛑 Service shutting down. Flushing all remaining Langfuse telemetry events...")
+    langfuse.flush()
+
+app = FastAPI(title="FinRisk AI Enterprise Observability", lifespan=lifespan)
+
+# 3. Pydantic Schemas
+class RiskAnalysisRequest(BaseModel):
+    company_name: str = Field(..., example="Tập đoàn Hòa Phát")
+    tax_code: str = Field(..., example="0900189284")
+    query: str = Field(..., example="Đánh giá khả năng thanh toán nợ vay ngắn hạn năm 2023.")
+    session_id: str = Field(default="sess_default")
+
+class UserFeedbackRequest(BaseModel):
+    trace_id: str = Field(..., example="tr-823b12ef-...")
+    is_positive: bool = Field(..., description="True nếu hài lòng (Thumbs up), False nếu phàn nàn (Thumbs down)")
+    comment: str = Field(default="", example="Số liệu chi phí tài chính rất chuẩn xác.")
+
+# 4. Các bước xử lý nghiệp vụ được bọc bởi @observe
+
+@observe()
+async def retrieve_financial_data(tax_code: str, query: str):
+    """Giả lập tìm kiếm Hybrid Search trên Vector DB Qdrant"""
+    langfuse_context.update_current_observation(
+        metadata={"tax_code": tax_code, "retrieval_strategy": "dense_sparse_hybrid"}
+    )
+    await asyncio.sleep(0.15) # Giả lập I/O database latency
+    return (
+        f"Dữ liệu BCTC {tax_code}: Nợ ngắn hạn: 52.300 tỷ VNĐ. "
+        f"Tài sản ngắn hạn: 64.100 tỷ VNĐ. Tỷ số thanh toán hiện hành: 1.23 lần."
+    )
+
+@observe()
+async def rerank_and_filter(raw_context: str):
+    """Giả lập bước Reranking bằng Cross-Encoder"""
+    await asyncio.sleep(0.08)
+    return raw_context
+
+# 5. Hàm sinh phản hồi Streaming tích hợp quan sát Generation
+async def stream_generator(prompt: str, trace_id: str) -> AsyncGenerator[str, None]:
+    """Stream token về Client đồng thời ghi nhận vào Langfuse Generation"""
+    
+    # Kéo prompt đã quản lý trên Langfuse
+    try:
+        managed_prompt = langfuse.get_prompt("credit_analyst_agent", label="production")
+        system_instruction = managed_prompt.compile()
+    except Exception:
+        system_instruction = "Bạn là chuyên gia phân tích tín dụng ngân hàng thận trọng và chuẩn xác."
+
+    stream = await groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.1,
+        stream=True
+    )
+    
+    collected_chunks = []
+    async for chunk in stream:
+        delta = chunk.choices[0].delta.content or ""
+        if delta:
+            collected_chunks.append(delta)
+            yield delta
+
+    full_output = "".join(collected_chunks)
+    
+    # Flush thủ công event ngầm
+    langfuse.flush()
+
+# 6. Endpoint Chính: Phân tích rủi ro có Tracing & Streaming
+@app.post("/api/v1/analyze-risk")
+@observe()
+async def analyze_company_risk(
+    req: RiskAnalysisRequest,
+    x_user_id: str = Header(default="analyst_guest")
+):
+    # Cấu hình Trace gốc
+    trace_id = langfuse_context.get_current_trace_id()
+    langfuse_context.update_current_trace(
+        name="Credit_Risk_Assessment_API",
+        user_id=x_user_id,
+        session_id=req.session_id,
+        tags=["credit_risk", req.company_name, "streaming"],
+        metadata={"tax_code": req.tax_code}
+    )
+    
+    # Bước 1: Trích xuất dữ liệu
+    context = await retrieve_financial_data(tax_code=req.tax_code, query=req.query)
+    
+    # Bước 2: Rerank
+    filtered_context = await rerank_and_filter(raw_context=context)
+    
+    full_prompt = (
+        f"Doanh nghiệp: {req.company_name} (MST: {req.tax_code})\n"
+        f"Tài liệu đối chiếu:\n{filtered_context}\n\n"
+        f"Yêu cầu thẩm định: {req.query}"
+    )
+    
+    # Trả về StreamingResponse kèm trace_id trong Header HTTP để Frontend dễ lưu lại
+    return StreamingResponse(
+        stream_generator(prompt=full_prompt, trace_id=trace_id),
+        media_type="text/event-stream",
+        headers={"X-Langfuse-Trace-Id": str(trace_id)}
+    )
+
+# 7. Endpoint Tiếp nhận Phản hồi Người dùng (Human-in-the-loop Feedback)
+@app.post("/api/v1/feedback")
+async def submit_feedback(fb: UserFeedbackRequest):
+    """Nhận Thumbs Up / Down từ giao diện người dùng và gán vào Trace tương ứng"""
+    try:
+        langfuse.score(
+            trace_id=fb.trace_id,
+            name="user_feedback",
+            value=1.0 if fb.is_positive else 0.0,
+            comment=fb.comment
+        )
+        return {"status": "success", "message": "Feedback recorded successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+---
+
+### 6.9. Best Practices & Các Lỗi Thường Gặp Cần Tránh Khi Vận Hành
+
+#### 1. Nguyên tắc Không Block Luồng Chính (Non-blocking Asynchronous Telemetry)
+* **Tuyệt đối không:** Gọi các hàm đồng bộ blocking như `langfuse.flush()` bên trong từng lượt request API của khách hàng. Việc này sẽ làm tăng thời gian chờ của người dùng thêm từ $100\text{ms} - 500\text{ms}$ chỉ để đợi ghi log.
+* **Đúng chuẩn:** Langfuse SDK sử dụng hàng đợi bất đồng bộ chạy nền (`background worker thread`). Dữ liệu được gom thành batch và gửi ngầm định kỳ (mỗi $0.5\text{s}$). Chỉ gọi `langfuse.flush()` duy nhất một lần khi ứng dụng chuẩn bị shutdown (tín hiệu `SIGTERM` / `SIGINT`).
+
+#### 2. Xử lý Thất lạc Context Trong Môi trường Bất đồng bộ (`asyncio`)
+Khi sử dụng `asyncio.gather()` hoặc chạy nhiều task song song, context của `langfuse_context` có thể bị phân mảnh nếu không cẩn thận.
+* **Cách khắc phục:** Truyền tường minh `trace_id` hoặc truyền `CallbackHandler` trực tiếp vào từng instance `ainvoke()` thay vì dựa hoàn toàn vào biến toàn cục.
+
+#### 3. Tuân thủ Bảo mật Dữ liệu Ngân hàng (Data Privacy & PII Masking)
+Theo quy định an toàn thông tin ngân hàng:
+* Không bao giờ gửi dữ liệu chưa che giấu như: Số chứng minh nhân dân/CCCD, Số tài khoản ngân hàng, Mật khẩu, Số dư cá nhân lên cloud công cộng.
+* Sử dụng bộ lọc tiền xử lý Regex Masking hoặc thư viện **Microsoft Presidio** để biến đổi dữ liệu trước khi đẩy vào Langfuse:
+  ```python
+  # Ví dụ Masking: "001100234567" -> "0011****4567"
+  def mask_account_number(text: str) -> str:
+      import re
+      return re.sub(r'(\d{4})\d{4,6}(\d{4})', r'\1****\2', text)
+  ```
+
+#### 4. Chiến lược Lấy mẫu (Sampling Strategy) Khi Tải Cao (High QPS)
+Nếu hệ thống phục vụ hàng triệu request mỗi ngày:
+* Việc log 100% trace có thể làm quá tải hạ tầng ClickHouse và tiêu tốn nhiều chi phí lưu trữ.
+* Cấu hình tỷ lệ lấy mẫu: **Trace 100% các request có phát sinh lỗi hoặc request từ người dùng nội bộ/VIP**, nhưng chỉ **lấy mẫu ngẫu nhiên 5%–10% các request thông thường** để theo dõi chỉ số thống kê P95/P99.
+
 
 ---
 

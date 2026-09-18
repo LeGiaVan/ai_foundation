@@ -1,0 +1,50 @@
+# FinRisk AI — Phase 1 Dependencies
+# Cài đặt: pip install -r requirements.txt
+
+# ── Core LangChain / LangGraph ──────────────────────────────────────────────
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-groq>=0.2.0          # Phase học: LLM miễn phí (Groq)
+langchain-anthropic>=0.2.0     # Phase production: Claude Haiku
+langchain-openai>=0.2.0        # Phase production: GPT-4o-mini (fallback)
+
+# ── Config & Validation ──────────────────────────────────────────────────────
+pydantic>=2.0
+pydantic-settings>=2.0
+python-dotenv>=1.0
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Phase 2 — RAG & Vector DB (uncomment khi bắt đầu Phase 2)
+# ──────────────────────────────────────────────────────────────────────────────
+# qdrant-client>=1.9.0
+# fastembed>=0.3.0              # BGE-M3 embedding (không cần GPU)
+# rank-bm25>=0.2.2              # BM25 sparse vector
+# llmlingua>=0.2.0              # Context compression
+# pdfplumber>=0.10.0            # Bóc tách bảng biểu từ PDF BCTC
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Phase 3 — Observability (uncomment khi bắt đầu Phase 3)
+# ──────────────────────────────────────────────────────────────────────────────
+# langfuse>=2.0.0
+# ragas>=0.1.0
+# deepeval>=0.21.0
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Phase 4 — Production API (uncomment khi bắt đầu Phase 4)
+# ──────────────────────────────────────────────────────────────────────────────
+# fastapi>=0.110.0
+# uvicorn[standard]>=0.27.0
+# redis>=5.0.0
+# celery>=5.3.0
+# slowapi>=0.1.9                # Rate limiting
+# python-multipart>=0.0.9       # File upload support
+# python-jose[cryptography]>=3.3.0  # JWT auth
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Dev / Testing
+# ──────────────────────────────────────────────────────────────────────────────
+# pytest>=8.0
+# pytest-asyncio>=0.23
+# pytest-cov>=5.0
+# ruff>=0.4.0
