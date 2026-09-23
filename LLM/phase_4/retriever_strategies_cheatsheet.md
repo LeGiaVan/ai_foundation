@@ -45,69 +45,9 @@ Trong RAG nâng cao (Advanced RAG) và Agentic RAG, **Retriever không phải l�
 
 ## 1.1. SƠ ĐỒ HỆ THỐNG HÓA TẤT CẢ CÁC CHIẾN THUẬT (MERMAID ARCHITECTURE MAP)
 
-```mermaid
-flowchart TD
-    %% ================= BẮT ĐẦU: ROUTER =================
-    UserQuery(["👤 User Query"]) --> Router{"🎯 Router Agent<br/><i>(Phân loại nhu cầu)</i>"}
-    
-    Router -- "Chào hỏi / Logic" --> DirectAns["💬 Trả lời trực tiếp (No-RAG)"]
-    Router -- "Cần tra cứu RAG" --> PreRetrieval
-
-    %% ================= 1. PRE-RETRIEVAL (BANNER NGANG GỌN GÀNG) =================
-    subgraph PreRetrieval["GIAI ĐOẠN 1: PRE-RETRIEVAL (Tối ưu Đầu vào)"]
-        direction LR
-        QR["<b>Query Rewriting</b><br/>Sửa lỗi & bối cảnh"] --- MQ["<b>Multi-Query</b><br/>Mở rộng 3-5 góc nhìn"] --- SQD["<b>Sub-Question</b><br/>Bẻ nhỏ câu hỏi"] --- HyDE["<b>HyDE</b><br/>Văn bản giả định"] --- SB["<b>Step-Back</b><br/>Trừu tượng hóa"]
-    end
-
-    PreRetrieval --> InRetrieval
-
-    %% ================= 2. IN-RETRIEVAL (3 CỘT CÂN ĐỐI) =================
-    subgraph InRetrieval["GIAI ĐOẠN 2: IN-RETRIEVAL (Tìm kiếm & Cấu trúc Dữ liệu)"]
-        direction TB
-        
-        subgraph Col1["Động cơ Cốt lõi (Search Engines)"]
-            Dense["Dense Search<br/><i>(HNSW / Vector)</i>"]
-            Sparse["Sparse Search<br/><i>(BM25 / Keyword)</i>"]
-            Hybrid["<b>Hybrid Search + RRF</b><br/><i>(Chuẩn vàng phối hợp)</i>"]
-            Dense & Sparse --> Hybrid
-        end
-
-        subgraph Col2["Tổ chức Ngữ cảnh (Hierarchy)"]
-            ParentDoc["<b>Parent-Document</b><br/>(Small-to-Big: 150 -> 1000)"]
-            SentenceWin["<b>Sentence-Window</b><br/>(Cửa sổ câu lân cận)"]
-            Contextual["<b>Anthropic Contextual</b><br/>(Gắn tiền tố bối cảnh)"]
-            RAPTOR["<b>RAPTOR</b><br/>(Cây tóm tắt đệ quy)"]
-        end
-
-        subgraph Col3["Biểu diễn Chuyên sâu"]
-            ColBERT["<b>ColBERT</b><br/>(Multi-vector per token)"]
-            GraphRAG["<b>GraphRAG</b><br/>(Knowledge Graph đa tầng)"]
-        end
-    end
-
-    InRetrieval --> PostRetrieval
-
-    %% ================= 3. POST-RETRIEVAL (TINH CHẾ ĐA TẦNG) =================
-    subgraph PostRetrieval["GIAI ĐOẠN 3: POST-RETRIEVAL (Lọc rác & Tinh chế)"]
-        direction TB
-        Rerank["<b>Cross-Encoder Reranker</b> (Cohere / BGE)<br/><i>Đẩy chunk đúng 100% lên Top 1</i>"]
-        Threshold["<b>Score Threshold</b><br/><i>Chém rác < điểm sàn</i>"]
-        MMR["<b>MMR Diversity</b><br/><i>Chống lặp luận điểm</i>"]
-        Reorder["<b>Lost-in-the-Middle Reorder</b><br/><i>Đẩy chunk tốt lên đầu & cuối</i>"]
-        Compress["<b>Context Compression</b> (LLMLingua)<br/><i>Cắt gọt từ thừa, tiết kiệm token</i>"]
-
-        Rerank --> Threshold & MMR
-        Threshold & MMR --> Reorder --> Compress
-    end
-
-    PostRetrieval --> Generator["🤖 LLM Generator<br/><i>(Strict Grounding Prompt)</i>"]
-
-    %% ================= 4. AGENTIC FEEDBACK / EVALUATION LOOP =================
-    Generator --> Eval{"🔍 Self-RAG & CRAG<br/><i>Đánh giá trung thực</i>"}
-    Eval -- "Đạt chuẩn 100%" --> FinalAns(["🎉 Output Hoàn Chỉnh"])
-    Eval -- "Thiếu dữ liệu" --> WebSearch["🌐 Fallback Web Search (Tavily)"] --> Generator
-    Eval -- "Ảo giác" --> PreRetrieval
-```
+<p align="center">
+  <img src="rag_optimize.png" alt="Rag Optimizing Stragegy" width="800" />
+</p>
 
 ---
 

@@ -53,6 +53,8 @@ def healthy_company_state():
         "human_comment": None,
         "final_report": "",
         "messages": [],
+        "loan_application": None,
+        "external_news_context": [],
     }
 
 
@@ -84,6 +86,8 @@ def distressed_company_state():
         "human_comment": None,
         "final_report": "",
         "messages": [],
+        "loan_application": None,
+        "external_news_context": [],
     }
 
 
@@ -208,7 +212,8 @@ class TestSupervisorRouting:
         }
         healthy_company_state["risk_assessment"] = {
             "risk_score": 10.0, "risk_level": "LOW",
-            "recommendation": "APPROVE", "red_flags": [], "five_c_summary": {},
+            "recommendation": "FAST_TRACK_REVIEW", "red_flags": [],
+            "five_c_summary": {}, "credit_covenants": [],
         }
         mock_llm = MagicMock()
         result = supervisor_node(healthy_company_state, llm=mock_llm)

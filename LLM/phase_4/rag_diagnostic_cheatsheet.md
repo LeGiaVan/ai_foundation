@@ -41,32 +41,10 @@ Hệ thống RAG là một dây chuyền gồm 2 nhà máy độc lập: **Retri
 
 ## 2. CÂY QUYẾT ĐỊNH CHẨN ĐOÁN LỖI (DIAGNOSTIC FLOWCHART)
 
-```mermaid
-flowchart TD
-    Start["Kết quả RAG không đạt yêu cầu"] --> CheckRecall{"Context Recall có ĐẠT không?<br/><i>(Có lấy đủ dữ liệu từ Ground Truth?)</i>"}
-    
-    %% Nhánh Recall Thấp
-    CheckRecall -- "KHÔNG (Recall < 0.8)" --> CheckPrecision1{"Context Precision thế nào?"}
-    CheckPrecision1 -- "Precision Cao" --> Case1["<b>BỆNH 1: Gắp đúng nhưng Vét thiếu</b><br/>• Tăng Top-K<br/>• Hybrid Search (BM25 + Dense)<br/>• Tăng Chunk Size / Sentence Window"]
-    CheckPrecision1 -- "Precision Thấp" --> Case3["<b>BỆNH 3: Mù tịt tài liệu (Retriever Hỏng)</b><br/>• Query Transformation (HyDE, Multi-Query)<br/>• Đổi Embedding Model chuyên ngành<br/>• Sửa Chunking Strategy"]
+<p align="center">
+  <img src="rag_diagnostic.png" alt="RAG Diagnostic Flowchart" width="800" />
+</p>
 
-    %% Nhánh Recall Cao
-    CheckRecall -- "CÓ (Recall ≥ 0.8)" --> CheckPrecision2{"Context Precision có ĐẠT không?<br/><i>(Chunk đúng có nằm ở top đầu?)</i>"}
-    
-    %% Nhánh Precision Thấp
-    CheckPrecision2 -- "KHÔNG (Precision < 0.7)" --> Case2["<b>BỆNH 2: Bội thực Rác & Đảo lộn thứ tự</b><br/>• Tích hợp Cross-Encoder Reranker (Cohere/BGE)<br/>• Score Thresholding (Lọc chunk < 0.7)<br/>• Context Compression (LLMLingua)"]
-    
-    %% Nhánh Retrieval Tốt
-    CheckPrecision2 -- "CÓ (Precision ≥ 0.7)" --> CheckFaith{"Faithfulness có ĐẠT không?<br/><i>(Câu trả lời có 100% từ Context?)</i>"}
-    
-    %% Nhánh Faithfulness Thấp
-    CheckFaith -- "KHÔNG (Faithfulness < 0.9)" --> Case4["<b>BỆNH 4 & 7: Ảo giác dù có tài liệu</b><br/>• Hạ Temperature = 0.0<br/>• Prompt 'Strict Grounding' ép trích dẫn nguồn<br/>• Ép Chain-of-Thought (Audit steps)"]
-    
-    %% Nhánh Faithfulness Cao
-    CheckFaith -- "CÓ (Faithfulness ≥ 0.9)" --> CheckRelevancy{"Answer Relevancy có ĐẠT không?<br/><i>(Có trả lời đúng câu hỏi không?)</i>"}
-    CheckRelevancy -- "KHÔNG (Relevancy < 0.8)" --> Case5["<b>BỆNH 5: Trả lời đúng sự thật nhưng Lạc đề</b><br/>• Few-shot Examples trong Prompt<br/>• Ép Structured Output (JSON / Pydantic)<br/>• Thêm Conciseness Rule (Cấm lan man)"]
-    CheckRelevancy -- "CÓ (Tất cả metrics đều cao)" --> Perfect["<b>HỆ THỐNG HOÀN HẢO</b><br/>Sẵn sàng cho Production CI/CD!"]
-```
 
 ---
 

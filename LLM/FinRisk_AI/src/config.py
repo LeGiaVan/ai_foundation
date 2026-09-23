@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     llm_model: str = "openai/gpt-oss-120b"    # Giữ llm_model để backward compatible
     llm_temperature: float = 0.0              # 0.0 = deterministic, quan trọng với tài chính
-    llm_max_tokens: int = 4096
+    llm_max_tokens: int = 4096 # LLM's Output Limit
+
 
     # ── LangGraph ───────────────────────────────────────────────────────
     checkpointer_db_path: str = "./data/checkpoints.sqlite"  # Phase 1: SQLite
@@ -61,6 +62,7 @@ class Settings(BaseSettings):
     # ── Chunking (Phase 2) ───────────────────────────────────────────────
     chunk_child_tokens: int = 150     # Child chunk nhỏ → dùng để embed & search
     chunk_parent_tokens: int = 1000   # Parent chunk lớn → dùng để gửi LLM (context đầy đủ)
+    chunk_overlap_tokens: int = 30    # Overlap giữa 2 child chunk liền kề → tránh đứt mạch ý nghĩa
 
     # ── Môi trường ───────────────────────────────────────────────────────
     environment: str = "development"          # "development" | "staging" | "production"

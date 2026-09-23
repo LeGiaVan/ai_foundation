@@ -4,13 +4,22 @@ indexer.py — PDF parse, chunking (Parent-Document strategy), và upsert vào Q
 Pipeline:
   PDF file
     → pdfplumber bóc tách text + bảng biểu (chuyển thành Markdown table)
-    → Chia parent chunks (~1000 tokens) để lưu context đầy đủ
-    → Chia child chunks (~150 tokens) để embed & search (chính xác hơn)
+    → Tách khối bảng Markdown thành Atomic Units (không bao giờ bị cắt vụn)
+    → Chia parent chunks (~1000 tokens) bằng Recursive Separator Splitter
+    → Chia child chunks (~150 tokens) với Overlap (~30 tokens)
     → Upsert cặp (child_embedding, parent_text) vào Qdrant
 
 Tại sao Parent-Document Retriever?
   - Search trên child nhỏ → precision cao (embed ngắn, focus).
   - Trả về parent lớn → LLM nhận context đủ thông tin để trả lời.
+
+Chunking Strategy (Upgraded):
+  - Recursive Separator Splitter: Ưu tiên ngắt theo thứ tự ngữ pháp tự nhiên
+    ("\n\n" → "\n" → ". " → "; " → ", " → " ") thay vì cắt cứng theo token count.
+  - Table Preservation: Khối Markdown Table (bắt đầu bằng "|") được giữ nguyên
+    thành 1 chunk duy nhất, không bao giờ bị cắt vụn.
+  - Chunk Overlap: Child chunks có 30 tokens overlap để tránh đứt mạch ý nghĩa
+    tại ranh giới chunk.
 
 Scale-up hint:
   - Thêm `doc_type` vào metadata: "bctc" | "thong_tu" | "kiem_toan"
@@ -20,6 +29,7 @@ Scale-up hint:
 
 import hashlib
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,6 +48,15 @@ from src.retriever.qdrant_client import (
 
 logger = logging.getLogger(__name__)
 _TOKENIZER = tiktoken.get_encoding("cl100k_base")  # Chuẩn GPT-4/Claude
+
+# Thứ tự ưu tiên separator: từ "ranh giới tự nhiên nhất" đến "cắt bắt buộc"
+_DEFAULT_SEPARATORS = ["\n\n", "\n", ". ", "; ", ", ", " "]
+
+# Regex phát hiện khối Markdown Table (bắt đầu bằng "|", kết thúc bằng "|")
+_TABLE_BLOCK_RE = re.compile(
+    r"((?:^[ \t]*\|.+\|[ \t]*$\n?)+)",
+    re.MULTILINE,
+)
 
 
 @dataclass
@@ -100,11 +119,15 @@ def parse_pdf(pdf_path: str | Path) -> list[dict]:
 # ─── Chunking ──────────────────────────────────────────────────────────────────
 
 def _count_tokens(text: str) -> int:
+    """Đếm số tokens trong text (dùng tokenizer cl100k_base)."""
     return len(_TOKENIZER.encode(text))
 
 
 def _split_by_tokens(text: str, max_tokens: int) -> list[str]:
-    """Chia text thành các đoạn không vượt quá max_tokens."""
+    """
+    Legacy splitter — giữ lại cho backward compatibility.
+    Chia text thành các đoạn không vượt quá max_tokens (cắt cứng).
+    """
     tokens = _TOKENIZER.encode(text)
     chunks = []
     for i in range(0, len(tokens), max_tokens):
@@ -113,12 +136,158 @@ def _split_by_tokens(text: str, max_tokens: int) -> list[str]:
     return chunks
 
 
+def _extract_table_blocks(text: str) -> tuple[list[str], list[str]]:
+    """
+    Tách văn bản thành 2 loại khối: text thường và Markdown Table.
+
+    Markdown Table là Atomic Unit — KHÔNG BAO GIỜ bị cắt vụn.
+    Khi 1 bảng dài hơn max_tokens, nó vẫn được giữ nguyên thành 1 chunk.
+
+    Returns:
+        (blocks, block_types):
+          - blocks: list các đoạn text/table.
+          - block_types: list tương ứng "text" hoặc "table".
+    """
+    blocks = []
+    block_types = []
+    last_end = 0
+
+    for match in _TABLE_BLOCK_RE.finditer(text):
+        # Text trước bảng
+        before = text[last_end:match.start()]
+        if before.strip():
+            blocks.append(before.strip())
+            block_types.append("text")
+
+        # Khối bảng (atomic)
+        table_block = match.group(0).strip()
+        if table_block:
+            blocks.append(table_block)
+            block_types.append("table")
+
+        last_end = match.end()
+
+    # Text sau bảng cuối cùng
+    after = text[last_end:]
+    if after.strip():
+        blocks.append(after.strip())
+        block_types.append("text")
+
+    # Nếu không có bảng nào, trả về toàn bộ text
+    if not blocks:
+        blocks = [text]
+        block_types = ["text"]
+
+    return blocks, block_types
+
+
+def _recursive_split(
+    text: str,
+    max_tokens: int,
+    separators: list[str] | None = None,
+) -> list[str]:
+    """
+    Recursive Character Text Splitter — chuẩn Production.
+
+    Thuật toán:
+      1. Thử chia text bằng separator đầu tiên (ưu tiên "\n\n").
+      2. Gộp các đoạn nhỏ lại cho đến khi vượt max_tokens → flush thành 1 chunk.
+      3. Nếu 1 đoạn đơn lẻ vẫn dài hơn max_tokens → đệ quy với separator tiếp theo.
+      4. Fallback cuối cùng: cắt cứng theo token (an toàn, không mất dữ liệu).
+
+    Args:
+        text: Văn bản cần chia.
+        max_tokens: Kích thước tối đa mỗi chunk (tính bằng tokens).
+        separators: Danh sách separator theo thứ tự ưu tiên.
+
+    Returns:
+        List các text chunk, mỗi chunk ≤ max_tokens.
+    """
+    if separators is None:
+        separators = _DEFAULT_SEPARATORS
+
+    # Base case: text đã đủ ngắn
+    if _count_tokens(text) <= max_tokens:
+        return [text] if text.strip() else []
+
+    # Nếu hết separator → fallback cắt cứng theo token
+    if not separators:
+        return _split_by_tokens(text, max_tokens)
+
+    current_sep = separators[0]
+    remaining_seps = separators[1:]
+
+    # Split bằng separator hiện tại
+    parts = text.split(current_sep)
+
+    chunks: list[str] = []
+    current_chunk = ""
+
+    for part in parts:
+        # Thử gộp part vào chunk hiện tại
+        candidate = (current_sep.join([current_chunk, part]) if current_chunk else part)
+
+        if _count_tokens(candidate) <= max_tokens:
+            # Vẫn vừa → tiếp tục gộp
+            current_chunk = candidate
+        else:
+            # Vượt quá → flush chunk hiện tại
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+
+            # Kiểm tra: part đơn lẻ có vượt max_tokens?
+            if _count_tokens(part) > max_tokens:
+                # Đệ quy với separator tiếp theo (nhỏ hơn)
+                sub_chunks = _recursive_split(part, max_tokens, remaining_seps)
+                chunks.extend(sub_chunks)
+                current_chunk = ""
+            else:
+                current_chunk = part
+
+    # Flush chunk cuối cùng
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+
+    return chunks
+
+
+def _add_overlap(chunks: list[str], overlap_tokens: int) -> list[str]:
+    """
+    Thêm Chunk Overlap: lấy ~overlap_tokens cuối của chunk trước
+    gắn vào đầu chunk sau.
+
+    Mục đích: Tránh đứt mạch ý nghĩa tại ranh giới chunk.
+    Ví dụ: overlap=30 tokens → 30 tokens cuối chunk_i sẽ xuất hiện
+    ở đầu chunk_{i+1}.
+
+    Args:
+        chunks: List text chunks (đã chia xong).
+        overlap_tokens: Số tokens overlap giữa 2 chunk liên tiếp.
+
+    Returns:
+        List chunks đã có overlap. Chunk đầu tiên giữ nguyên.
+    """
+    if overlap_tokens <= 0 or len(chunks) <= 1:
+        return chunks
+
+    result = [chunks[0]]
+    for i in range(1, len(chunks)):
+        prev_tokens = _TOKENIZER.encode(chunks[i - 1])
+        # Lấy overlap_tokens cuối cùng của chunk trước
+        overlap_part = _TOKENIZER.decode(prev_tokens[-overlap_tokens:])
+        result.append(overlap_part + " " + chunks[i])
+
+    return result
+
+
 def chunk_documents(pages: list[dict], metadata: dict) -> list[DocumentChunk]:
     """
-    Parent-Document chunking strategy:
-      1. Mỗi trang → chia thành parent chunks (chunk_parent_tokens tokens).
-      2. Mỗi parent → chia thành child chunks (chunk_child_tokens tokens).
-      3. Child dùng để embed & search; parent dùng để gửi LLM.
+    Parent-Document chunking strategy (Recursive Splitter + Table Preservation + Overlap):
+
+      1. Mỗi trang → tách Markdown Table thành Atomic Units (không bao giờ cắt vụn).
+      2. Text thường → Recursive Separator Split thành parent chunks (~1000 tokens).
+      3. Mỗi parent → Recursive Split thành child chunks (~150 tokens) + Overlap (~30 tokens).
+      4. Child dùng để embed & search; parent dùng để gửi LLM.
 
     Args:
         pages: Output của parse_pdf().
@@ -134,13 +303,29 @@ def chunk_documents(pages: list[dict], metadata: dict) -> list[DocumentChunk]:
         page_num = page_data["page"]
         full_text = page_data["text"]
 
-        # Chia trang thành parent chunks
-        parents = _split_by_tokens(full_text, settings.chunk_parent_tokens)
-        for parent_text in parents:
+        # Bước 1: Tách text thường vs Markdown Table blocks
+        blocks, block_types = _extract_table_blocks(full_text)
+
+        # Bước 2: Xử lý từng block
+        parent_chunks: list[str] = []
+        for block, btype in zip(blocks, block_types):
+            if btype == "table":
+                # Bảng = Atomic Unit → giữ nguyên thành 1 parent chunk
+                parent_chunks.append(block)
+            else:
+                # Text thường → Recursive Split thành parent chunks
+                parents = _recursive_split(block, settings.chunk_parent_tokens)
+                parent_chunks.extend(parents)
+
+        # Bước 3: Mỗi parent → chia thành child chunks + overlap
+        for parent_text in parent_chunks:
             if not parent_text.strip():
                 continue
-            # Chia parent thành child chunks nhỏ hơn để embed
-            children = _split_by_tokens(parent_text, settings.chunk_child_tokens)
+
+            # Child chunks: Recursive Split + Overlap
+            raw_children = _recursive_split(parent_text, settings.chunk_child_tokens)
+            children = _add_overlap(raw_children, settings.chunk_overlap_tokens)
+
             for child_text in children:
                 if not child_text.strip():
                     continue

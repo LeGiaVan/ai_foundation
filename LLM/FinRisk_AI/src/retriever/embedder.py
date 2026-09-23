@@ -14,19 +14,24 @@ Scale-up hint:
 import logging
 from functools import lru_cache
 
-from fastembed import SparseTextEmbedding, TextEmbedding
+from fastembed import SparseTextEmbedding
+from sentence_transformers import SentenceTransformer
+
+from src.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
-def get_dense_embedder() -> TextEmbedding:
+def get_dense_embedder() -> SentenceTransformer:
     """
-    Singleton Dense Embedder dùng BAAI/bge-m3.
-    Lần đầu tải model ~600MB từ HuggingFace Hub (cache ở ~/.cache/fastembed).
+    Singleton Dense Embedder dùng BAAI/bge-m3 qua sentence-transformers.
+    Model 1024 chiều, hỗ trợ tiếng Việt xuất sắc.
     """
-    logger.info("Loading dense embedding model: BAAI/bge-m3 (first run: ~600MB download)")
-    return TextEmbedding("BAAI/bge-m3")
+    settings = get_settings()
+    model_name = settings.dense_model
+    logger.info("Loading dense embedding model: %s", model_name)
+    return SentenceTransformer(model_name)
 
 
 @lru_cache(maxsize=1)
@@ -49,9 +54,11 @@ def embed_dense(texts: list[str]) -> list[list[float]]:
     Returns:
         List dense vectors, mỗi vector có 1024 chiều (BGE-M3).
     """
+    if not texts:
+        return []
     embedder = get_dense_embedder()
-    # fastembed trả về generator → chuyển thành list
-    return [vec.tolist() for vec in embedder.embed(texts)]
+    embeddings = embedder.encode(texts, normalize_embeddings=True)
+    return embeddings.tolist()
 
 
 def embed_sparse(texts: list[str]) -> list[dict]:

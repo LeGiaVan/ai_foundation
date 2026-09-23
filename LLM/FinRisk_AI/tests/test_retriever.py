@@ -16,10 +16,62 @@ Chạy integration tests (cần Qdrant docker):
 
 import pytest
 
-# ─── Chunking Tests (pure Python, không cần model/network) ─────────────────────
+# ─── Recursive Splitter Tests ──────────────────────────────────────────────────
 
-class TestChunking:
-    """Test chunking logic độc lập."""
+class TestRecursiveSplit:
+    """Test _recursive_split — Recursive Separator Splitter."""
+
+    def test_short_text_no_split(self):
+        """Text ngắn hơn max_tokens → trả về nguyên 1 chunk."""
+        from src.retriever.indexer import _recursive_split
+
+        text = "Tổng doanh thu năm 2023 đạt 59,956 tỷ đồng."
+        chunks = _recursive_split(text, max_tokens=500)
+        assert len(chunks) == 1
+        assert chunks[0] == text
+
+    def test_splits_on_double_newline_first(self):
+        """Ưu tiên ngắt tại '\\n\\n' trước khi thử separator khác."""
+        from src.retriever.indexer import _recursive_split
+
+        text = "Đoạn 1 ngắn.\n\nĐoạn 2 ngắn.\n\nĐoạn 3 ngắn."
+        chunks = _recursive_split(text, max_tokens=10)
+        # Mỗi đoạn ~5 tokens → 3 chunks khi max_tokens=10
+        assert len(chunks) >= 2
+        assert "Đoạn 1" in chunks[0]
+
+    def test_falls_back_to_sentence_split(self):
+        """Khi không có '\\n\\n' hay '\\n', split theo '. '."""
+        from src.retriever.indexer import _recursive_split
+
+        text = "Câu một rất ngắn. Câu hai cũng ngắn. Câu ba kết thúc."
+        chunks = _recursive_split(text, max_tokens=10)
+        assert len(chunks) >= 2
+        # Mỗi chunk phải là câu hoàn chỉnh (hoặc gần hoàn chỉnh)
+        for chunk in chunks:
+            assert len(chunk.strip()) > 0
+
+    def test_empty_text_returns_empty(self):
+        """Text rỗng → trả về list rỗng."""
+        from src.retriever.indexer import _recursive_split
+
+        assert _recursive_split("", max_tokens=100) == []
+        assert _recursive_split("   ", max_tokens=100) == []
+
+    def test_long_text_produces_bounded_chunks(self):
+        """Mỗi chunk phải ≤ max_tokens (trừ trường hợp 1 từ dài hơn max)."""
+        from src.retriever.indexer import _recursive_split, _count_tokens
+
+        long_text = "Doanh thu quý 2 tăng trưởng mạnh. " * 100
+        chunks = _recursive_split(long_text, max_tokens=50)
+        assert len(chunks) > 1
+        for chunk in chunks:
+            # Cho phép sai lệch nhỏ do separator
+            assert _count_tokens(chunk) <= 55  # 50 + buffer nhỏ
+
+
+class TestLegacySplitByTokens:
+    """Test _split_by_tokens — legacy splitter (backward compatibility)."""
 
     def test_split_by_tokens_short_text(self):
         """Text ngắn hơn max_tokens → chỉ có 1 chunk."""
@@ -37,6 +89,96 @@ class TestChunking:
         long_text = "Đây là câu ngắn. " * 200  # ~600 tokens
         chunks = _split_by_tokens(long_text, max_tokens=100)
         assert len(chunks) > 1
+
+
+# ─── Table Extraction Tests ───────────────────────────────────────────────────
+
+class TestTableExtraction:
+    """Test _extract_table_blocks — tách Markdown Table thành Atomic Unit."""
+
+    def test_no_table_returns_full_text(self):
+        """Text không có bảng → 1 block loại 'text'."""
+        from src.retriever.indexer import _extract_table_blocks
+
+        text = "Doanh thu 2023 đạt 59,956 tỷ đồng."
+        blocks, types = _extract_table_blocks(text)
+        assert len(blocks) == 1
+        assert types[0] == "text"
+
+    def test_table_extracted_as_atomic(self):
+        """Khối Markdown Table phải là 1 block riêng loại 'table'."""
+        from src.retriever.indexer import _extract_table_blocks
+
+        text = (
+            "Phần text trước bảng.\n\n"
+            "| Chỉ tiêu | 2023 | 2022 |\n"
+            "|---|---|---|\n"
+            "| Doanh thu | 59,956 | 58,100 |\n"
+            "| Lợi nhuận | 9,042 | 8,567 |\n\n"
+            "Phần text sau bảng."
+        )
+        blocks, types = _extract_table_blocks(text)
+        assert "table" in types
+        table_idx = types.index("table")
+        # Bảng phải chứa đầy đủ các hàng
+        assert "Doanh thu" in blocks[table_idx]
+        assert "Lợi nhuận" in blocks[table_idx]
+
+    def test_multiple_tables(self):
+        """Nhiều bảng → nhiều block 'table' riêng biệt."""
+        from src.retriever.indexer import _extract_table_blocks
+
+        text = (
+            "Text.\n\n"
+            "| A | B |\n|---|---|\n| 1 | 2 |\n\n"
+            "Giữa.\n\n"
+            "| C | D |\n|---|---|\n| 3 | 4 |\n"
+        )
+        blocks, types = _extract_table_blocks(text)
+        table_count = types.count("table")
+        assert table_count == 2
+
+
+# ─── Overlap Tests ─────────────────────────────────────────────────────────────
+
+class TestOverlap:
+    """Test _add_overlap — thêm token overlap giữa 2 child chunk liền kề."""
+
+    def test_single_chunk_no_overlap(self):
+        """Chỉ 1 chunk → không thay đổi."""
+        from src.retriever.indexer import _add_overlap
+
+        chunks = ["Chunk duy nhất."]
+        result = _add_overlap(chunks, overlap_tokens=30)
+        assert result == chunks
+
+    def test_overlap_adds_suffix_of_previous(self):
+        """Chunk thứ 2 phải bắt đầu bằng phần cuối của chunk thứ 1."""
+        from src.retriever.indexer import _add_overlap
+
+        chunks = [
+            "Doanh thu tăng trưởng 5% so với năm ngoái nhờ mở rộng thị trường nội địa.",
+            "Chi phí hoạt động giảm 3% giúp cải thiện biên lợi nhuận đáng kể.",
+        ]
+        result = _add_overlap(chunks, overlap_tokens=5)
+        assert len(result) == 2
+        # Chunk đầu giữ nguyên
+        assert result[0] == chunks[0]
+        # Chunk 2 phải dài hơn chunk gốc (vì có overlap prepend)
+        assert len(result[1]) > len(chunks[1])
+
+    def test_zero_overlap_no_change(self):
+        """Overlap = 0 → không thay đổi."""
+        from src.retriever.indexer import _add_overlap
+
+        chunks = ["A", "B"]
+        assert _add_overlap(chunks, overlap_tokens=0) == chunks
+
+
+# ─── Chunking Integration Tests ───────────────────────────────────────────────
+
+class TestChunking:
+    """Test chunk_documents end-to-end."""
 
     def test_chunk_documents_empty_pages(self):
         """Pages rỗng → trả về list rỗng, không lỗi."""
@@ -69,6 +211,27 @@ class TestChunking:
             assert c.metadata["company"] == "Vinamilk"
             assert c.metadata["year"] == 2023
             assert c.metadata["page"] == 3
+
+    def test_table_preserved_as_atomic(self):
+        """Markdown Table trong text không bị cắt vụn giữa chừng."""
+        from src.retriever.indexer import chunk_documents
+
+        table_text = (
+            "| Chỉ tiêu | 2023 | 2022 |\n"
+            "|---|---|---|\n"
+            "| Doanh thu | 59,956 | 58,100 |\n"
+            "| Lợi nhuận | 9,042 | 8,567 |\n"
+            "| Chi phí | 14,890 | 14,200 |"
+        )
+        pages = [{"page": 1, "text": f"Intro text.\n\n{table_text}\n\nText kết luận."}]
+        chunks = chunk_documents(pages, metadata={"company": "Test"})
+
+        # Phải có ít nhất 1 chunk mà parent_text chứa toàn bộ bảng
+        table_found = any(
+            "Doanh thu" in c.parent_text and "Lợi nhuận" in c.parent_text and "Chi phí" in c.parent_text
+            for c in chunks
+        )
+        assert table_found, "Bảng bị cắt vụn — vi phạm Atomic Unit!"
 
 
 class TestTableToMarkdown:
@@ -234,3 +397,25 @@ class TestSearchAndRerank:
         # Threshold cực cao → tất cả bị loại
         results = rerank("DSCR cụ thể của Vinamilk 2023?", candidates, threshold=0.99)
         assert len(results) == 0
+
+    def test_rerank_deduplicates_same_parent(self):
+        """Nhiều child chunk cùng parent → chỉ giữ 1 (score cao nhất)."""
+        from src.retriever.searcher import rerank
+
+        same_parent = "DSCR Vinamilk 2023 = 2.8. Biên an toàn. Công ty có khả năng trả nợ tốt."
+        candidates = [
+            {
+                "child_text": "DSCR Vinamilk 2023 = 2.8",
+                "parent_text": same_parent,
+                "company": "Vinamilk", "year": 2023, "page": 1,
+            },
+            {
+                "child_text": "Biên an toàn. Công ty có khả năng trả nợ tốt.",
+                "parent_text": same_parent,
+                "company": "Vinamilk", "year": 2023, "page": 1,
+            },
+        ]
+
+        results = rerank("DSCR Vinamilk là bao nhiêu?", candidates, top_n=5, threshold=0.0)
+        # Dù có 2 child khác nhau, cùng parent → chỉ giữ 1
+        assert len(results) == 1

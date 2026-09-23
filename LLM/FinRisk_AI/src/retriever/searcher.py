@@ -148,20 +148,35 @@ def rerank(
     pairs = [(query, text) for text in child_texts]
     scores = reranker.predict(pairs)  # numpy array
 
-    # Kết hợp score với payload
+    # Kết hợp score với payload, sort giảm dần
     scored = sorted(
         zip(scores, candidates),
         key=lambda x: x[0],
         reverse=True,
     )
 
+    # Khử trùng parent_text: Nếu nhiều child chunk cùng 1 parent đều lọt vào top,
+    # chỉ giữ child có score cao nhất (đã sort ở trên). Tránh gửi context trùng lặp cho LLM.
     results = []
-    for score, payload in scored[:n]:
+    seen_parents = set()
+
+    for score, payload in scored:
+        if len(results) >= n:
+            break
         if float(score) < min_score:
             logger.debug("Reranker: skipped doc score=%.3f < threshold=%.3f", score, min_score)
             continue
+
+        parent_text = payload.get("parent_text", "")
+        # Dùng hash để so sánh nhanh (parent_text có thể rất dài)
+        parent_hash = hash(parent_text)
+        if parent_hash in seen_parents:
+            logger.debug("Reranker: deduplicated parent chunk (score=%.3f)", score)
+            continue
+
+        seen_parents.add(parent_hash)
         results.append(RetrievedDoc(
-            page_content=payload.get("parent_text", ""),
+            page_content=parent_text,
             child_text=payload.get("child_text", ""),
             score=float(score),
             metadata={k: v for k, v in payload.items() if k not in ("child_text", "parent_text")},
