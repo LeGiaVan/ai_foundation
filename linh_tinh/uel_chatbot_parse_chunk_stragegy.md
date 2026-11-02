@@ -28,6 +28,7 @@ Ví dụ:
 ## 2. Pipeline tổng thể
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false, "useMaxWidth": true}, "theme": "default"}}%%
 flowchart TD
     A["DOCX / XLSX"] --> B["Document Parser"]
     B --> C["Structured Markdown + Metadata"]
@@ -231,6 +232,7 @@ Việc bổ sung trường này không đồng nghĩa được tự động xóa
 Một hàng FAQ được chuyển thành một Record độc lập.
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false, "useMaxWidth": true}, "theme": "default"}}%%
 flowchart TD
     A["FAQ Table"] --> B["Parse từng hàng"]
     B --> C["Question + Answer"]
@@ -294,6 +296,7 @@ Child 2 retrieval_text =
 ```
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false, "useMaxWidth": true}, "theme": "default"}}%%
 flowchart TD
     A["FAQ Record"] --> B{"Retrieval Text > Threshold?"}
 
@@ -345,6 +348,7 @@ Template 07 bao gồm:
 **Primary Parser:** Structure-aware Parser.
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false, "useMaxWidth": true}, "theme": "default"}}%%
 flowchart TD
     A["Template 07 DOCX"] --> B["Heading / Table Parser"]
     B --> C["Structured Markdown"]
@@ -420,6 +424,7 @@ Cần bảo toàn căn cứ pháp lý trong Parent hoặc bản Markdown gốc �
 ### Nếu vượt Threshold
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false, "useMaxWidth": true}, "theme": "default"}}%%
 flowchart TD
     A["Section 3.3"] --> B{"Vượt Threshold?"}
 
@@ -528,6 +533,7 @@ Mỗi quy trình có chín Section:
 **Primary Parser:** Procedure-aware Parser.
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false, "useMaxWidth": true}, "theme": "default"}}%%
 flowchart TD
     A["Template 08 DOCX"] --> B["Detect Procedure ID"]
 
@@ -761,6 +767,7 @@ Kênh thực hiện
 ### Step-based Flow
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false, "useMaxWidth": true}, "theme": "default"}}%%
 flowchart TD
     A["Section 4 — Bảng các bước"] --> B["Parse từng Table Row"]
     B --> C["Step Records"]
@@ -894,6 +901,7 @@ Không cần LLM sau bước lookup nếu chỉ trả lại dữ liệu đã xá
 Context được lựa chọn dựa trên nhu cầu của câu hỏi và ngân sách token.
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false, "useMaxWidth": true}, "theme": "default"}}%%
 flowchart TD
     A["User Query"] --> B["Query Router"]
     B --> C{"Loại truy vấn?"}
@@ -1061,6 +1069,7 @@ Cần sử dụng cùng embedding model, LLM, bộ câu hỏi và ngân sách co
 Kiến trúc đề xuất:
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false, "useMaxWidth": true}, "theme": "default"}}%%
 flowchart LR
     A["Document Parsing"] --> B["Structured Markdown"]
     B --> C["Document Type Routing"]
